@@ -1,7 +1,15 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Animated } from 'react-native';
 import { supabase } from '../lib/supabase';
-import { Audio } from 'expo-av';
+
+// expo-av loaded lazily inside function to prevent crash if native module unavailable
+function getAudio() {
+  try {
+    return require('expo-av')?.Audio || null;
+  } catch (e) {
+    return null;
+  }
+}
 
 export default function LiveNotificationListener({ profile }) {
   const [notification, setNotification] = React.useState(null);
@@ -38,21 +46,24 @@ export default function LiveNotificationListener({ profile }) {
 
   const showNotification = async (message, type) => {
     setNotification(message);
-    
-    // Play Sound
+
+    // Play Sound safely
     try {
-      const soundUri = type === 'beep' 
-        ? 'https://actions.google.com/sounds/v1/alarms/beep_short.ogg'
-        : 'https://actions.google.com/sounds/v1/alarms/dinner_bell.ogg';
-        
-      const { sound } = await Audio.Sound.createAsync({ uri: soundUri }, { shouldPlay: true });
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (status.didJustFinish) {
-          sound.unloadAsync();
-        }
-      });
+      const Audio = getAudio();
+      if (Audio?.Sound?.createAsync) {
+        const soundUri = type === 'beep'
+          ? 'https://actions.google.com/sounds/v1/alarms/beep_short.ogg'
+          : 'https://actions.google.com/sounds/v1/alarms/dinner_bell.ogg';
+
+        const { sound } = await Audio.Sound.createAsync({ uri: soundUri }, { shouldPlay: true });
+        sound.setOnPlaybackStatusUpdate((status) => {
+          if (status.didJustFinish) {
+            sound.unloadAsync();
+          }
+        });
+      }
     } catch (e) {
-      console.log('Failed to play sound', e);
+      console.log('Failed to play sound (non-fatal):', e.message);
     }
 
     // Show popup
