@@ -1,0 +1,30 @@
+{
+  "cli": {
+    "version": ">= 3.0.0"
+  },
+  "build": {
+    "preview": {
+      "channel": "preview",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://tiuwfhkrjvtkshebdwlp.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_YhLxIyNN7tsS2ixSnGfRUw_TF4EsRf-"
+      }
+    },
+    "production": {
+      "channel": "production"
+    },
+    "apk": {
+      "channel": "production",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://tiuwfhkrjvtkshebdwlp.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_YhLxIyNN7tsS2ixSnGfRUw_TF4EsRf-"
+      }
+    }
+  }
+}

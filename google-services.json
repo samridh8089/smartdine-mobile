@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "947704412610",
+    "project_id": "smartdine-2ecbd",
+    "storage_bucket": "smartdine-2ecbd.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:947704412610:android:bb58c55bfc74b4c6d37e5b",
+        "android_client_info": {
+          "package_name": "com.smartdine.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDxbFHrMFptmT2YixzUPUw0Y9NTTh6dWcA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:947704412610:android:d9828765878c1262d37e5b",
+        "android_client_info": {
+          "package_name": "com.smartdine.mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDxbFHrMFptmT2YixzUPUw0Y9NTTh6dWcA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
