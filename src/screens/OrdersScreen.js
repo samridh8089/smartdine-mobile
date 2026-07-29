@@ -296,6 +296,14 @@ export default function OrdersScreen({ route }) {
 
         try {
           await supabase
+            .from('order_batches')
+            .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+            .eq('order_id', cancellingOrderId)
+            .neq('status', 'served');
+        } catch (_) {}
+
+        try {
+          await supabase
             .from('order_items')
             .update({ is_cancelled: true, status: 'cancelled' })
             .eq('order_id', cancellingOrderId)

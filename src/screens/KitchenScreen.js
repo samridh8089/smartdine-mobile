@@ -303,6 +303,15 @@ export default function KitchenScreen({ route }) {
           return sum;
         }, 0);
 
+        // Update latest order_batches status to 'cancelled' in Supabase!
+        try {
+          await supabase
+            .from('order_batches')
+            .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+            .eq('order_id', cancellingOrderId)
+            .neq('status', 'served');
+        } catch (_) {}
+
         try {
           await supabase
             .from('order_items')
