@@ -7,30 +7,44 @@ import { sendSystemAlert, registerPushToken } from '../lib/notifications';
 import { getFormattedOrderId } from '../lib/orderUtils';
 import { startAlarm, stopAlarm, isAlarmActive } from '../lib/alarmManager';
 
-// Helper to group identical items (e.g., 2x, 3x instead of repeating 1x)
+// Helper to group items by name and served status
 function consolidateItems(itemList = [], orderStatus = '') {
-  const map = new Map();
+  try {
+    if (!Array.isArray(itemList)) return [];
+    const map = new Map();
 
-  itemList.forEach(item => {
-    const name = item?.menu_item_name || item?.name || 'Item';
-    const qty = Number(item?.quantity) || 1;
-    const isItemServed = item?.is_served || item?.is_prepared || item?.status === 'served' || item?.status === 'ready' || false;
-    const isOrderServedOrReady = ['ready', 'served', 'completed'].includes(orderStatus);
+    itemList.forEach(item => {
+      if (!item) return;
+      const name = String(item.menu_item_name || item.name || 'Item');
+      const qty = Number(item.quantity) || 1;
+      const price = Number(item.price) || 0;
 
-    if (map.has(name)) {
-      const existing = map.get(name);
-      existing.quantity += qty;
-      if (isItemServed || isOrderServedOrReady) existing.isServed = true;
-    } else {
-      map.set(name, {
-        name,
-        quantity: qty,
-        isServed: isItemServed || isOrderServedOrReady,
-      });
-    }
-  });
+      // Determine if item entry is already served or if order is completed/served
+      const isItemServed = Boolean(item.is_served || item.is_prepared || item.status === 'served' || item.status === 'ready');
+      const isOrderServedOrReady = ['ready', 'served', 'completed'].includes(orderStatus);
+      const isServed = isItemServed || isOrderServedOrReady;
 
-  return Array.from(map.values());
+      // Group key separates items that are served vs items that are NEW to prepare!
+      const key = `${name}_${isServed ? 'served' : 'new'}`;
+
+      if (map.has(key)) {
+        const existing = map.get(key);
+        existing.quantity += qty;
+      } else {
+        map.set(key, {
+          name,
+          quantity: qty,
+          price,
+          isServed,
+        });
+      }
+    });
+
+    return Array.from(map.values());
+  } catch (e) {
+    console.log('Error consolidating items:', e);
+    return [];
+  }
 }
 
 const PRESET_CANCEL_REASONS = [
@@ -99,20 +113,22 @@ export default function KitchenScreen({ route }) {
           'postgres_changes',
           { event: '*', schema: 'public', table: 'orders' },
           (payload) => {
-            if (payload?.new && payload.new.status === 'new') {
-              if (!restaurantId || payload.new.restaurant_id === restaurantId) {
-                Vibration.vibrate([0, 1000, 500, 1000]);
-                startAlarm(
-                  'new_order',
-                  'NEW KITCHEN ORDER',
-                  `Table ${payload.new.table_name || 'N/A'} - Total: ₹${payload.new.total || 0}`
-                );
-                sendSystemAlert(
-                  'NEW KITCHEN ORDER',
-                  `Table ${payload.new.table_name || 'N/A'} - Total: ₹${payload.new.total || 0}`
-                );
+            try {
+              if (payload?.new && payload.new.status === 'new') {
+                if (!restaurantId || payload.new.restaurant_id === restaurantId) {
+                  Vibration.vibrate([0, 1000, 500, 1000]);
+                  startAlarm(
+                    'new_order',
+                    'NEW KITCHEN ORDER',
+                    `Table ${payload.new.table_name || 'N/A'} - Total: ₹${payload.new.total || 0}`
+                  );
+                  sendSystemAlert(
+                    'NEW KITCHEN ORDER',
+                    `Table ${payload.new.table_name || 'N/A'} - Total: ₹${payload.new.total || 0}`
+                  );
+                }
               }
-            }
+            } catch (_) {}
             fetchOrders();
           }
         )
@@ -322,8 +338,16 @@ export default function KitchenScreen({ route }) {
             </View>
           ) : (
             displayedOrders.map((order) => {
-              if (!order) return null;
-              const consolidated = consolidateItems(order.order_items || [], order.status);
+              if (!order || !order.id) return null;
+              
+              let consolidated = [];
+              let toPrepareCount = 0;
+              try {
+                consolidated = consolidateItems(order.order_items || [], order.status);
+                toPrepareCount = consolidated.filter(i => !i.isServed).reduce((s, i) => s + i.quantity, 0);
+              } catch (_) {
+                consolidated = [];
+              }
 
               return (
                 <View key={order.id} style={styles.orderCard}>
@@ -356,13 +380,20 @@ export default function KitchenScreen({ route }) {
                     </View>
                   )}
 
-                  {/* Items List — Consolidated (2x, 3x) with Green Tick for Served/Ready */}
+                  {/* Items List — Separated NEW items to prepare vs PREVIOUSLY SERVED items */}
                   <View style={styles.itemsBox}>
-                    <Text style={styles.itemsHeaderTitle}>ITEMS TO PREPARE ({consolidated.reduce((s, i) => s + i.quantity, 0)}):</Text>
+                    <Text style={styles.itemsHeaderTitle}>
+                      {toPrepareCount > 0 ? `ITEMS TO PREPARE (${toPrepareCount}):` : `ITEMS (${consolidated.reduce((s, i) => s + i.quantity, 0)}):`}
+                    </Text>
+
                     {consolidated.map((item, i) => (
                       <View key={i} style={styles.itemRow}>
-                        <Text style={styles.itemQty}>{item.quantity}x</Text>
-                        <Text style={styles.itemName}>{item.name}</Text>
+                        <Text style={[styles.itemQty, item.isServed && { color: '#64748b' }]}>
+                          {item.quantity}x
+                        </Text>
+                        <Text style={[styles.itemName, item.isServed && { color: '#64748b' }]}>
+                          {item.name}
+                        </Text>
                         {item.isServed && (
                           <View style={styles.servedCheckBadge}>
                             <Text style={styles.servedCheckText}>✓ Served</Text>
@@ -372,9 +403,9 @@ export default function KitchenScreen({ route }) {
                     ))}
                   </View>
 
-                  {/* Kitchen Action Buttons */}
+                  {/* Kitchen Action Buttons (Strict Sequential Flow) */}
                   <View style={styles.actions}>
-                    {/* NEW ORDER FLOW: Only Accept and Reject */}
+                    {/* 1. NEW STATUS: Only Accept Order and Reject */}
                     {order.status === 'new' && (
                       <>
                         <TouchableOpacity 
@@ -396,7 +427,7 @@ export default function KitchenScreen({ route }) {
                       </>
                     )}
 
-                    {/* ACCEPTED FLOW: Start Preparing, Mark Ready, Cancel */}
+                    {/* 2. ACCEPTED STATUS: Only Start Preparing and Cancel */}
                     {order.status === 'accepted' && (
                       <>
                         <TouchableOpacity 
@@ -404,12 +435,6 @@ export default function KitchenScreen({ route }) {
                           onPress={() => updateStatus(order.id, 'preparing')}
                         >
                           <Text style={styles.actionBtnText}>Start Preparing</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity 
-                          style={[styles.actionBtn, { backgroundColor: '#8b5cf6' }]}
-                          onPress={() => updateStatus(order.id, 'ready')}
-                        >
-                          <Text style={styles.actionBtnText}>Mark Ready</Text>
                         </TouchableOpacity>
                         <TouchableOpacity 
                           style={[styles.actionBtn, { backgroundColor: '#ef4444' }]}
@@ -424,7 +449,7 @@ export default function KitchenScreen({ route }) {
                       </>
                     )}
 
-                    {/* PREPARING FLOW: Mark Ready, Cancel */}
+                    {/* 3. PREPARING STATUS: Only Mark Ready and Cancel */}
                     {order.status === 'preparing' && (
                       <>
                         <TouchableOpacity 
@@ -455,13 +480,12 @@ export default function KitchenScreen({ route }) {
         </ScrollView>
       )}
 
-      {/* Cancellation Modal with Quick Suggested Preset Reasons */}
+      {/* Cancellation Modal */}
       <Modal visible={cancelModalVisible} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.modalBox}>
             <Text style={styles.modalTitle}>Select Cancellation Reason</Text>
             
-            {/* Preset Suggested Reason Buttons */}
             <Text style={styles.presetLabel}>QUICK REASONS:</Text>
             <View style={styles.presetContainer}>
               {PRESET_CANCEL_REASONS.map((preset, idx) => (

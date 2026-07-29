@@ -5,32 +5,42 @@ import { sendSystemAlert, registerPushToken } from '../lib/notifications';
 import { getFormattedOrderId } from '../lib/orderUtils';
 import { startAlarm, stopAlarm, isAlarmActive } from '../lib/alarmManager';
 
-// Helper to group identical items (e.g., 2x, 3x instead of repeating 1x)
+// Helper to group items by name and served status
 function consolidateItems(itemList = [], orderStatus = '') {
-  const map = new Map();
+  try {
+    if (!Array.isArray(itemList)) return [];
+    const map = new Map();
 
-  itemList.forEach(item => {
-    const name = item?.menu_item_name || item?.name || 'Item';
-    const qty = Number(item?.quantity) || 1;
-    const price = Number(item?.price) || 0;
-    const isItemServed = item?.is_served || item?.is_prepared || item?.status === 'served' || item?.status === 'ready' || false;
-    const isOrderServedOrReady = ['ready', 'served', 'completed'].includes(orderStatus);
+    itemList.forEach(item => {
+      if (!item) return;
+      const name = String(item.menu_item_name || item.name || 'Item');
+      const qty = Number(item.quantity) || 1;
+      const price = Number(item.price) || 0;
 
-    if (map.has(name)) {
-      const existing = map.get(name);
-      existing.quantity += qty;
-      if (isItemServed || isOrderServedOrReady) existing.isServed = true;
-    } else {
-      map.set(name, {
-        name,
-        quantity: qty,
-        price,
-        isServed: isItemServed || isOrderServedOrReady,
-      });
-    }
-  });
+      const isItemServed = Boolean(item.is_served || item.is_prepared || item.status === 'served' || item.status === 'ready');
+      const isOrderServedOrReady = ['ready', 'served', 'completed'].includes(orderStatus);
+      const isServed = isItemServed || isOrderServedOrReady;
 
-  return Array.from(map.values());
+      const key = `${name}_${isServed ? 'served' : 'new'}`;
+
+      if (map.has(key)) {
+        const existing = map.get(key);
+        existing.quantity += qty;
+      } else {
+        map.set(key, {
+          name,
+          quantity: qty,
+          price,
+          isServed,
+        });
+      }
+    });
+
+    return Array.from(map.values());
+  } catch (e) {
+    console.log('Error consolidating items:', e);
+    return [];
+  }
 }
 
 const PRESET_CANCEL_REASONS = [
@@ -73,18 +83,20 @@ export default function OrdersScreen({ route }) {
             'postgres_changes',
             { event: '*', schema: 'public', table: 'orders', filter: `restaurant_id=eq.${restaurantId}` },
             (payload) => {
-              if (payload?.eventType === 'INSERT') {
-                Vibration.vibrate([0, 1000, 500, 1000]);
-                startAlarm(
-                  'new_order',
-                  'NEW CUSTOMER ORDER',
-                  `Table ${payload.new?.table_name || 'N/A'} - Total: ₹${payload.new?.total || 0}`
-                );
-                sendSystemAlert(
-                  'NEW CUSTOMER ORDER',
-                  `Table ${payload.new?.table_name || 'N/A'} - Total: ₹${payload.new?.total || 0}`
-                );
-              }
+              try {
+                if (payload?.eventType === 'INSERT') {
+                  Vibration.vibrate([0, 1000, 500, 1000]);
+                  startAlarm(
+                    'new_order',
+                    'NEW CUSTOMER ORDER',
+                    `Table ${payload.new?.table_name || 'N/A'} - Total: ₹${payload.new?.total || 0}`
+                  );
+                  sendSystemAlert(
+                    'NEW CUSTOMER ORDER',
+                    `Table ${payload.new?.table_name || 'N/A'} - Total: ₹${payload.new?.total || 0}`
+                  );
+                }
+              } catch (_) {}
               fetchOrders();
             }
           )
@@ -301,8 +313,16 @@ export default function OrdersScreen({ route }) {
             </View>
           ) : (
             displayedOrders.map((order) => {
-              if (!order) return null;
-              const consolidated = consolidateItems(order.order_items || [], order.status);
+              if (!order || !order.id) return null;
+
+              let consolidated = [];
+              let toPrepareCount = 0;
+              try {
+                consolidated = consolidateItems(order.order_items || [], order.status);
+                toPrepareCount = consolidated.filter(i => !i.isServed).reduce((s, i) => s + i.quantity, 0);
+              } catch (_) {
+                consolidated = [];
+              }
 
               return (
                 <View key={order.id} style={styles.orderCard}>
@@ -348,13 +368,16 @@ export default function OrdersScreen({ route }) {
                     </View>
                   )}
 
-                  {/* Consolidated Items Breakdown (2x, 3x) */}
+                  {/* Consolidated Items Breakdown */}
                   <View style={styles.itemsBox}>
-                    <Text style={styles.itemsHeaderTitle}>ORDER ITEMS ({consolidated.reduce((s, i) => s + i.quantity, 0)}):</Text>
+                    <Text style={styles.itemsHeaderTitle}>
+                      {toPrepareCount > 0 ? `ITEMS TO PREPARE (${toPrepareCount}):` : `ITEMS (${consolidated.reduce((s, i) => s + i.quantity, 0)}):`}
+                    </Text>
+
                     {consolidated.map((item, i) => (
                       <View key={i} style={styles.itemRow}>
-                        <Text style={styles.itemQty}>{item.quantity}x</Text>
-                        <Text style={styles.itemName}>{item.name}</Text>
+                        <Text style={[styles.itemQty, item.isServed && { color: '#64748b' }]}>{item.quantity}x</Text>
+                        <Text style={[styles.itemName, item.isServed && { color: '#64748b' }]}>{item.name}</Text>
                         {item.isServed && (
                           <View style={styles.servedCheckBadge}>
                             <Text style={styles.servedCheckText}>✓ Served</Text>
@@ -407,8 +430,30 @@ export default function OrdersScreen({ route }) {
                       </>
                     )}
 
-                    {/* ACCEPTED / PREPARING FLOW */}
-                    {(order.status === 'accepted' || order.status === 'preparing') && (
+                    {/* ACCEPTED FLOW: Only Start Preparing and Cancel */}
+                    {order.status === 'accepted' && (
+                      <>
+                        <TouchableOpacity 
+                          style={[styles.actionBtn, { backgroundColor: '#3b82f6' }]}
+                          onPress={() => updateStatus(order.id, 'preparing')}
+                        >
+                          <Text style={styles.actionBtnText}>Start Preparing</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity 
+                          style={[styles.actionBtn, { backgroundColor: '#ef4444' }]}
+                          onPress={() => {
+                            setCancellingOrderId(order.id);
+                            setCancellationReason('');
+                            setCancelModalVisible(true);
+                          }}
+                        >
+                          <Text style={styles.actionBtnText}>Cancel</Text>
+                        </TouchableOpacity>
+                      </>
+                    )}
+
+                    {/* PREPARING FLOW: Only Mark Ready and Cancel */}
+                    {order.status === 'preparing' && (
                       <>
                         <TouchableOpacity 
                           style={[styles.actionBtn, { backgroundColor: '#10b981' }]}
@@ -429,7 +474,7 @@ export default function OrdersScreen({ route }) {
                       </>
                     )}
 
-                    {/* READY, SERVED: Only Complete button */}
+                    {/* READY, SERVED: Only Complete button, NO Cancel */}
                     {(order.status === 'ready' || order.status === 'served') && (
                       <TouchableOpacity 
                         style={[styles.actionBtn, { backgroundColor: '#10b981' }]}
@@ -446,7 +491,7 @@ export default function OrdersScreen({ route }) {
         </ScrollView>
       )}
 
-      {/* Cancellation Modal with Quick Suggested Preset Reasons */}
+      {/* Cancellation Modal */}
       <Modal visible={cancelModalVisible} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.modalBox}>
