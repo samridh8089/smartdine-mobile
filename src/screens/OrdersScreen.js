@@ -5,6 +5,42 @@ import { sendSystemAlert, registerPushToken } from '../lib/notifications';
 import { getFormattedOrderId } from '../lib/orderUtils';
 import { startAlarm, stopAlarm, isAlarmActive } from '../lib/alarmManager';
 
+// Helper to group identical items (e.g., 2x, 3x instead of repeating 1x)
+function consolidateItems(itemList = [], orderStatus = '') {
+  const map = new Map();
+
+  itemList.forEach(item => {
+    const name = item?.menu_item_name || item?.name || 'Item';
+    const qty = Number(item?.quantity) || 1;
+    const price = Number(item?.price) || 0;
+    const isItemServed = item?.is_served || item?.is_prepared || item?.status === 'served' || item?.status === 'ready' || false;
+    const isOrderServedOrReady = ['ready', 'served', 'completed'].includes(orderStatus);
+
+    if (map.has(name)) {
+      const existing = map.get(name);
+      existing.quantity += qty;
+      if (isItemServed || isOrderServedOrReady) existing.isServed = true;
+    } else {
+      map.set(name, {
+        name,
+        quantity: qty,
+        price,
+        isServed: isItemServed || isOrderServedOrReady,
+      });
+    }
+  });
+
+  return Array.from(map.values());
+}
+
+const PRESET_CANCEL_REASONS = [
+  'Item Out of Stock',
+  'Kitchen Busy / Overflow',
+  'Customer Cancelled',
+  'Closing Soon',
+  'Incorrect Order',
+];
+
 export default function OrdersScreen({ route }) {
   const profile = route?.params?.profile || {};
   const restaurantId = profile?.restaurant_id || null;
@@ -266,7 +302,7 @@ export default function OrdersScreen({ route }) {
           ) : (
             displayedOrders.map((order) => {
               if (!order) return null;
-              const itemList = order.order_items || [];
+              const consolidated = consolidateItems(order.order_items || [], order.status);
 
               return (
                 <View key={order.id} style={styles.orderCard}>
@@ -312,14 +348,19 @@ export default function OrdersScreen({ route }) {
                     </View>
                   )}
 
-                  {/* Detailed Items Breakdown */}
+                  {/* Consolidated Items Breakdown (2x, 3x) */}
                   <View style={styles.itemsBox}>
-                    <Text style={styles.itemsHeaderTitle}>ORDER ITEMS ({itemList.reduce((s, i) => s + (i?.quantity || 1), 0)}):</Text>
-                    {itemList.map((item, i) => (
+                    <Text style={styles.itemsHeaderTitle}>ORDER ITEMS ({consolidated.reduce((s, i) => s + i.quantity, 0)}):</Text>
+                    {consolidated.map((item, i) => (
                       <View key={i} style={styles.itemRow}>
-                        <Text style={styles.itemQty}>{item?.quantity || 1}x</Text>
-                        <Text style={styles.itemName}>{item?.menu_item_name || item?.name || 'Item'}</Text>
-                        <Text style={styles.itemPrice}>₹{((item?.price || 0) * (item?.quantity || 1)).toFixed(2)}</Text>
+                        <Text style={styles.itemQty}>{item.quantity}x</Text>
+                        <Text style={styles.itemName}>{item.name}</Text>
+                        {item.isServed && (
+                          <View style={styles.servedCheckBadge}>
+                            <Text style={styles.servedCheckText}>✓ Served</Text>
+                          </View>
+                        )}
+                        <Text style={styles.itemPrice}>₹{(item.price * item.quantity).toFixed(2)}</Text>
                       </View>
                     ))}
 
@@ -344,7 +385,30 @@ export default function OrdersScreen({ route }) {
 
                   {/* Action Buttons */}
                   <View style={styles.actions}>
-                    {order.status !== 'completed' && order.status !== 'cancelled' && (
+                    {/* NEW ORDER FLOW: Only Accept and Reject */}
+                    {order.status === 'new' && (
+                      <>
+                        <TouchableOpacity 
+                          style={[styles.actionBtn, { backgroundColor: '#059669' }]}
+                          onPress={() => updateStatus(order.id, 'accepted')}
+                        >
+                          <Text style={styles.actionBtnText}>Accept Order</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity 
+                          style={[styles.actionBtn, { backgroundColor: '#ef4444' }]}
+                          onPress={() => {
+                            setCancellingOrderId(order.id);
+                            setCancellationReason('');
+                            setCancelModalVisible(true);
+                          }}
+                        >
+                          <Text style={styles.actionBtnText}>Reject</Text>
+                        </TouchableOpacity>
+                      </>
+                    )}
+
+                    {/* ACCEPTED / PREPARING FLOW */}
+                    {(order.status === 'accepted' || order.status === 'preparing') && (
                       <>
                         <TouchableOpacity 
                           style={[styles.actionBtn, { backgroundColor: '#10b981' }]}
@@ -364,6 +428,16 @@ export default function OrdersScreen({ route }) {
                         </TouchableOpacity>
                       </>
                     )}
+
+                    {/* READY, SERVED: Only Complete button */}
+                    {(order.status === 'ready' || order.status === 'served') && (
+                      <TouchableOpacity 
+                        style={[styles.actionBtn, { backgroundColor: '#10b981' }]}
+                        onPress={() => updateStatus(order.id, 'completed')}
+                      >
+                        <Text style={styles.actionBtnText}>Complete & Close</Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                 </View>
               );
@@ -372,18 +446,41 @@ export default function OrdersScreen({ route }) {
         </ScrollView>
       )}
 
-      {/* Cancellation Modal */}
+      {/* Cancellation Modal with Quick Suggested Preset Reasons */}
       <Modal visible={cancelModalVisible} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>Reason for Order Cancellation</Text>
+            <Text style={styles.modalTitle}>Select Cancellation Reason</Text>
+            
+            <Text style={styles.presetLabel}>QUICK REASONS:</Text>
+            <View style={styles.presetContainer}>
+              {PRESET_CANCEL_REASONS.map((preset, idx) => (
+                <TouchableOpacity
+                  key={idx}
+                  style={[
+                    styles.presetChip,
+                    cancellationReason === preset && styles.presetChipActive
+                  ]}
+                  onPress={() => setCancellationReason(preset)}
+                >
+                  <Text style={[
+                    styles.presetChipText,
+                    cancellationReason === preset && styles.presetChipTextActive
+                  ]}>
+                    {preset}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
             <TextInput
               style={styles.modalInput}
-              placeholder="e.g., Item Out of Stock / Customer Changed Mind"
+              placeholder="Or type custom reason..."
               placeholderTextColor="#94a3b8"
               value={cancellationReason}
               onChangeText={setCancellationReason}
             />
+
             <View style={styles.modalActions}>
               <TouchableOpacity 
                 style={styles.modalCancelBtn} 
@@ -452,9 +549,11 @@ const styles = StyleSheet.create({
   verifyBtnText: { color: '#ffffff', fontWeight: 'bold', fontSize: 12 },
   itemsBox: { backgroundColor: '#f8fafc', borderRadius: 8, padding: 10, marginTop: 8, borderWidth: 1, borderColor: '#f1f5f9' },
   itemsHeaderTitle: { color: '#64748b', fontSize: 11, fontWeight: 'bold', marginBottom: 6 },
-  itemRow: { flexDirection: 'row', justifyContent: 'space-between', marginVertical: 2 },
-  itemQty: { color: '#059669', fontWeight: 'bold', width: 28 },
+  itemRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 2 },
+  itemQty: { color: '#059669', fontWeight: 'bold', width: 32 },
   itemName: { color: '#0f172a', flex: 1 },
+  servedCheckBadge: { backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#10b981', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginRight: 8 },
+  servedCheckText: { color: '#10b981', fontSize: 11, fontWeight: 'bold' },
   itemPrice: { color: '#64748b' },
   divider: { height: 1, backgroundColor: '#e2e8f0', marginVertical: 6 },
   summaryRow: { flexDirection: 'row', justifyContent: 'space-between', marginVertical: 2 },
@@ -467,7 +566,13 @@ const styles = StyleSheet.create({
   actionBtnText: { color: 'white', fontWeight: 'bold', fontSize: 13 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 20 },
   modalBox: { backgroundColor: '#ffffff', borderRadius: 12, padding: 20, borderWidth: 1, borderColor: '#e2e8f0' },
-  modalTitle: { color: '#0f172a', fontSize: 16, fontWeight: 'bold', marginBottom: 12 },
+  modalTitle: { color: '#0f172a', fontSize: 16, fontWeight: 'bold', marginBottom: 8 },
+  presetLabel: { color: '#64748b', fontSize: 10, fontWeight: 'bold', marginBottom: 6 },
+  presetContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12 },
+  presetChip: { backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#cbd5e1', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 },
+  presetChipActive: { backgroundColor: '#ef4444', borderColor: '#ef4444' },
+  presetChipText: { color: '#475569', fontSize: 12, fontWeight: '500' },
+  presetChipTextActive: { color: 'white', fontWeight: 'bold' },
   modalInput: { backgroundColor: '#f8fafc', color: '#0f172a', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, padding: 12, marginBottom: 16 },
   modalActions: { flexDirection: 'row', gap: 10 },
   modalCancelBtn: { flex: 1, padding: 12, borderRadius: 8, backgroundColor: '#e2e8f0', alignItems: 'center' },
