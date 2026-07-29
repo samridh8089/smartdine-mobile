@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "smartdine-mobile",
-    "owner": "sam33.dh",
+    "owner": "ad-city",
     "slug": "smartdine-mobile-app",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -23,7 +23,9 @@
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE",
         "POST_NOTIFICATIONS",
-        "WAKE_LOCK"
+        "WAKE_LOCK",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
@@ -48,14 +50,8 @@
     },
     "extra": {
       "eas": {
-        "projectId": "407eef68-5b75-4b63-b679-8123df863ea7"
+        "projectId": "2fb0358d-6e46-4269-996d-0614a98052e1"
       }
-    },
-    "runtimeVersion": {
-      "policy": "appVersion"
-    },
-    "updates": {
-      "url": "https://u.expo.dev/407eef68-5b75-4b63-b679-8123df863ea7"
     }
   }
 }
