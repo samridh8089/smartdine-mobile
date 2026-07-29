@@ -1,28 +1,16 @@
 /**
  * AlarmManager — Safe Continuous Alarm for SmartDine
  *
- * Uses only Vibration (always available) + expo-notifications for alerts.
- * expo-av audio is optional — if unavailable, vibration alone is used.
- * All native calls are safely wrapped to prevent crashes.
+ * Uses Vibration + expo-notifications for loud alerts.
+ * Completely eliminates native audio player calls to prevent screen blackout crashes.
  */
 
-import { Vibration, Platform } from 'react-native';
+import { Vibration } from 'react-native';
 
 // ─── Internal State ─────────────────────────────────────────────────────────
-let _soundObject = null;
 let _isPlaying = false;
 let _currentAlarmType = null;
-let _vibrationTimerActive = false;
-
-// ─── Safe lazy load of expo-av ────────────────────────────────────────────
-function getAudio() {
-  try {
-    const av = require('expo-av');
-    return av?.Audio || null;
-  } catch (e) {
-    return null;
-  }
-}
+let _vibrationInterval = null;
 
 // ─── Safe lazy load of expo-notifications ────────────────────────────────
 function getNotifications() {
@@ -33,30 +21,18 @@ function getNotifications() {
   }
 }
 
-// ─── Configure audio session ─────────────────────────────────────────────────
-async function _configureAudio() {
-  try {
-    const Audio = getAudio();
-    if (!Audio?.setAudioModeAsync) return;
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS: false,
-      staysActiveInBackground: true,
-      playsInSilentModeIOS: true,
-      shouldDuckAndroid: false,
-      playThroughEarpieceAndroid: false,
-    });
-  } catch (e) {
-    console.log('[AlarmManager] Audio config error (non-fatal):', e.message);
-  }
-}
-
 // ─── Vibration loop ───────────────────────────────────────────────────────────
 function _startVibration() {
   try {
-    Vibration.cancel();
-    // Repeat: 800ms on, 400ms off
+    _stopVibration();
     Vibration.vibrate([0, 800, 400], true);
-    _vibrationTimerActive = true;
+
+    // Backup interval in case OS cancels vibration
+    _vibrationInterval = setInterval(() => {
+      try {
+        Vibration.vibrate([0, 800, 400], true);
+      } catch (_) {}
+    }, 4000);
   } catch (e) {
     console.log('[AlarmManager] Vibration error (non-fatal):', e.message);
   }
@@ -64,11 +40,12 @@ function _startVibration() {
 
 function _stopVibration() {
   try {
+    if (_vibrationInterval) {
+      clearInterval(_vibrationInterval);
+      _vibrationInterval = null;
+    }
     Vibration.cancel();
-    _vibrationTimerActive = false;
-  } catch (e) {
-    // ignore
-  }
+  } catch (_) {}
 }
 
 // ─── Notification alert ────────────────────────────────────────────────────
@@ -94,99 +71,41 @@ async function _sendNotification(title, body, type) {
   }
 }
 
-// ─── Audio playback ───────────────────────────────────────────────────────────
-async function _startAudio() {
-  try {
-    const Audio = getAudio();
-    if (!Audio?.Sound?.createAsync) return;
-
-    await _configureAudio();
-
-    // Stop any previous sound
-    if (_soundObject) {
-      try {
-        await _soundObject.stopAsync();
-        await _soundObject.unloadAsync();
-      } catch (_) {}
-      _soundObject = null;
-    }
-
-    const { sound } = await Audio.Sound.createAsync(
-      require('../../assets/alarm.mp3'),
-      {
-        shouldPlay: true,
-        isLooping: true,
-        volume: 1.0,
-        isMuted: false,
-      }
-    );
-    _soundObject = sound;
-    console.log('[AlarmManager] Audio started');
-  } catch (e) {
-    console.log('[AlarmManager] Audio start error (vibration still active):', e.message);
-    _soundObject = null;
-  }
-}
-
-async function _stopAudio() {
-  if (!_soundObject) return;
-  try {
-    await _soundObject.stopAsync();
-    await _soundObject.unloadAsync();
-  } catch (e) {
-    console.log('[AlarmManager] Audio stop error (non-fatal):', e.message);
-  } finally {
-    _soundObject = null;
-  }
-}
-
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
- * Start the continuous alarm.
- * @param {'new_order'|'waiter_call'|'food_ready'} type
- * @param {string} title
- * @param {string} body
+ * Start continuous alarm (vibration + notification).
  */
 export async function startAlarm(type, title, body) {
   try {
-    // Don't restart same type
     if (_isPlaying && _currentAlarmType === type) return;
 
     _currentAlarmType = type;
     _isPlaying = true;
 
-    // 1. Vibration (always works)
+    // 1. Safe vibration loop
     _startVibration();
 
-    // 2. Notification
+    // 2. High priority notification
     _sendNotification(title, body, type).catch(() => {});
 
-    // 3. Audio (optional, won't crash if fails)
-    _startAudio().catch(() => {});
-
-    console.log('[AlarmManager] Alarm started:', type);
+    console.log('[AlarmManager] Safe alarm started:', type);
   } catch (e) {
-    console.log('[AlarmManager] startAlarm error (non-fatal):', e.message);
+    console.log('[AlarmManager] startAlarm error:', e.message);
   }
 }
 
 /**
- * Stop the continuous alarm.
+ * Stop continuous alarm.
  */
 export async function stopAlarm() {
   try {
-    if (!_isPlaying) return;
-
     _isPlaying = false;
     _currentAlarmType = null;
-
     _stopVibration();
-    await _stopAudio();
-
     console.log('[AlarmManager] Alarm stopped.');
   } catch (e) {
-    console.log('[AlarmManager] stopAlarm error (non-fatal):', e.message);
+    console.log('[AlarmManager] stopAlarm error:', e.message);
   }
 }
 
@@ -198,7 +117,7 @@ export function isAlarmActive() {
 }
 
 /**
- * Get the currently active alarm type.
+ * Get currently active alarm type.
  */
 export function getActiveAlarmType() {
   return _currentAlarmType;
