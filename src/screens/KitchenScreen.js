@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { 
-  View, Text, ScrollView, TouchableOpacity, Alert, StyleSheet, Vibration, ActivityIndicator, Modal, TextInput 
+  View, Text, ScrollView, TouchableOpacity, Alert, StyleSheet, ActivityIndicator, Modal, TextInput 
 } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { sendSystemAlert, registerPushToken } from '../lib/notifications';
@@ -10,22 +10,34 @@ import { startAlarm, stopAlarm, isAlarmActive } from '../lib/alarmManager';
 // Helper to consolidate items into NEW items to prepare vs PREVIOUSLY SERVED items
 function consolidateItems(itemList = [], orderStatus = '') {
   try {
-    if (!Array.isArray(itemList)) return { newItems: [], servedItems: [] };
+    if (!Array.isArray(itemList) || itemList.length === 0) {
+      return { newItems: [], servedItems: [] };
+    }
 
     const newMap = new Map();
     const servedMap = new Map();
 
+    // 1. Find latest item creation timestamp to identify re-ordered batches
+    let latestTime = 0;
+    itemList.forEach(item => {
+      if (item?.created_at) {
+        const t = new Date(item.created_at).getTime();
+        if (!isNaN(t) && t > latestTime) latestTime = t;
+      }
+    });
+
+    // 2. Classify items: items from an earlier batch (3+ seconds prior) are PREVIOUSLY SERVED!
     itemList.forEach(item => {
       if (!item) return;
       const name = String(item.menu_item_name || item.name || 'Item');
       const qty = Number(item.quantity) || 1;
       const price = Number(item.price) || 0;
 
-      const isItemServed = Boolean(item.is_served || item.is_prepared || item.status === 'served' || item.status === 'ready');
-      const isOrderServedOrReady = ['ready', 'served', 'completed'].includes(orderStatus);
-      const isServed = isItemServed || isOrderServedOrReady;
+      const itemTime = item.created_at ? new Date(item.created_at).getTime() : 0;
+      const isOlderBatch = (latestTime > 0 && itemTime > 0 && (latestTime - itemTime > 3000));
+      const isItemServed = Boolean(item.is_served || item.is_prepared || item.status === 'served' || item.status === 'ready' || isOlderBatch);
 
-      if (isServed) {
+      if (isItemServed) {
         if (servedMap.has(name)) {
           servedMap.get(name).quantity += qty;
         } else {
@@ -119,16 +131,15 @@ export default function KitchenScreen({ route }) {
             try {
               if (payload?.new && payload.new.status === 'new') {
                 if (!restaurantId || payload.new.restaurant_id === restaurantId) {
-                  Vibration.vibrate([0, 1000, 500, 1000]);
                   startAlarm(
                     'new_order',
                     'NEW KITCHEN ORDER',
                     `Table ${payload.new.table_name || 'N/A'} - Total: ₹${payload.new.total || 0}`
-                  );
+                  ).catch(() => {});
                   sendSystemAlert(
                     'NEW KITCHEN ORDER',
                     `Table ${payload.new.table_name || 'N/A'} - Total: ₹${payload.new.total || 0}`
-                  );
+                  ).catch(() => {});
                 }
               }
             } catch (_) {}
@@ -192,11 +203,11 @@ export default function KitchenScreen({ route }) {
                   'new_order',
                   'NEW KITCHEN ORDER',
                   `Table ${ord.table_name || 'N/A'} - Total: ₹${ord.total || 0}`
-                );
+                ).catch(() => {});
                 sendSystemAlert(
                   'NEW KITCHEN ORDER',
                   `Table ${ord.table_name || 'N/A'} - Total: ₹${ord.total || 0}`
-                );
+                ).catch(() => {});
               }
             }
           });
@@ -221,8 +232,18 @@ export default function KitchenScreen({ route }) {
         .eq('id', id);
 
       if (!error) {
+        // Mark all current order items as served when order marked ready or served
+        if (status === 'ready' || status === 'served') {
+          try {
+            await supabase
+              .from('order_items')
+              .update({ is_served: true, status: 'served' })
+              .eq('order_id', id);
+          } catch (_) {}
+        }
+
         if (['accepted', 'preparing', 'ready', 'served', 'completed'].includes(status)) {
-          stopAlarm();
+          stopAlarm().catch(() => {});
         }
         fetchOrders();
       } else {
@@ -249,7 +270,7 @@ export default function KitchenScreen({ route }) {
         .eq('id', cancellingOrderId);
 
       if (!error) {
-        stopAlarm();
+        stopAlarm().catch(() => {});
         setCancelModalVisible(false);
         setCancellingOrderId(null);
         setCancellationReason('');
@@ -282,7 +303,7 @@ export default function KitchenScreen({ route }) {
         </View>
 
         {isAlarmActive() && (
-          <TouchableOpacity onPress={() => stopAlarm()} style={styles.stopAlarmBtn}>
+          <TouchableOpacity onPress={() => stopAlarm().catch(() => {})} style={styles.stopAlarmBtn}>
             <Text style={styles.stopAlarmText}>STOP ALARM</Text>
           </TouchableOpacity>
         )}

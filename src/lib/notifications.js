@@ -97,10 +97,9 @@ export async function registerPushToken(userIdParam = null) {
   }
 }
 
-// Trigger System Alert (local notification + vibration)
+// Trigger System Alert safely without conflicting vibrations
 export async function sendSystemAlert(title, body, data = {}) {
   try {
-    Vibration.vibrate([0, 1000, 500, 1000]);
     const Notifs = getNotifications();
 
     if (Notifs && Notifs.scheduleNotificationAsync) {
@@ -113,7 +112,6 @@ export async function sendSystemAlert(title, body, data = {}) {
           priority: Notifs.AndroidNotificationPriority
             ? Notifs.AndroidNotificationPriority.MAX
             : 2,
-          vibrate: [0, 1000, 500, 1000],
           data,
         },
         trigger: null, // Immediate
