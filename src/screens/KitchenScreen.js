@@ -7,11 +7,13 @@ import { sendSystemAlert, registerPushToken } from '../lib/notifications';
 import { getFormattedOrderId } from '../lib/orderUtils';
 import { startAlarm, stopAlarm, isAlarmActive } from '../lib/alarmManager';
 
-// Helper to group items by name and served status
+// Helper to consolidate items into NEW items to prepare vs PREVIOUSLY SERVED items
 function consolidateItems(itemList = [], orderStatus = '') {
   try {
-    if (!Array.isArray(itemList)) return [];
-    const map = new Map();
+    if (!Array.isArray(itemList)) return { newItems: [], servedItems: [] };
+
+    const newMap = new Map();
+    const servedMap = new Map();
 
     itemList.forEach(item => {
       if (!item) return;
@@ -19,31 +21,32 @@ function consolidateItems(itemList = [], orderStatus = '') {
       const qty = Number(item.quantity) || 1;
       const price = Number(item.price) || 0;
 
-      // Determine if item entry is already served or if order is completed/served
       const isItemServed = Boolean(item.is_served || item.is_prepared || item.status === 'served' || item.status === 'ready');
       const isOrderServedOrReady = ['ready', 'served', 'completed'].includes(orderStatus);
       const isServed = isItemServed || isOrderServedOrReady;
 
-      // Group key separates items that are served vs items that are NEW to prepare!
-      const key = `${name}_${isServed ? 'served' : 'new'}`;
-
-      if (map.has(key)) {
-        const existing = map.get(key);
-        existing.quantity += qty;
+      if (isServed) {
+        if (servedMap.has(name)) {
+          servedMap.get(name).quantity += qty;
+        } else {
+          servedMap.set(name, { name, quantity: qty, price, isServed: true });
+        }
       } else {
-        map.set(key, {
-          name,
-          quantity: qty,
-          price,
-          isServed,
-        });
+        if (newMap.has(name)) {
+          newMap.get(name).quantity += qty;
+        } else {
+          newMap.set(name, { name, quantity: qty, price, isServed: false });
+        }
       }
     });
 
-    return Array.from(map.values());
+    return {
+      newItems: Array.from(newMap.values()),
+      servedItems: Array.from(servedMap.values()),
+    };
   } catch (e) {
     console.log('Error consolidating items:', e);
-    return [];
+    return { newItems: [], servedItems: [] };
   }
 }
 
@@ -340,14 +343,18 @@ export default function KitchenScreen({ route }) {
             displayedOrders.map((order) => {
               if (!order || !order.id) return null;
               
-              let consolidated = [];
-              let toPrepareCount = 0;
+              let newItems = [];
+              let servedItems = [];
+              let newCount = 0;
+              let servedCount = 0;
+
               try {
-                consolidated = consolidateItems(order.order_items || [], order.status);
-                toPrepareCount = consolidated.filter(i => !i.isServed).reduce((s, i) => s + i.quantity, 0);
-              } catch (_) {
-                consolidated = [];
-              }
+                const res = consolidateItems(order.order_items || [], order.status);
+                newItems = res.newItems || [];
+                servedItems = res.servedItems || [];
+                newCount = newItems.reduce((s, i) => s + i.quantity, 0);
+                servedCount = servedItems.reduce((s, i) => s + i.quantity, 0);
+              } catch (_) {}
 
               return (
                 <View key={order.id} style={styles.orderCard}>
@@ -380,27 +387,44 @@ export default function KitchenScreen({ route }) {
                     </View>
                   )}
 
-                  {/* Items List — Separated NEW items to prepare vs PREVIOUSLY SERVED items */}
+                  {/* Items List Box */}
                   <View style={styles.itemsBox}>
-                    <Text style={styles.itemsHeaderTitle}>
-                      {toPrepareCount > 0 ? `ITEMS TO PREPARE (${toPrepareCount}):` : `ITEMS (${consolidated.reduce((s, i) => s + i.quantity, 0)}):`}
-                    </Text>
-
-                    {consolidated.map((item, i) => (
-                      <View key={i} style={styles.itemRow}>
-                        <Text style={[styles.itemQty, item.isServed && { color: '#64748b' }]}>
-                          {item.quantity}x
-                        </Text>
-                        <Text style={[styles.itemName, item.isServed && { color: '#64748b' }]}>
-                          {item.name}
-                        </Text>
-                        {item.isServed && (
-                          <View style={styles.servedCheckBadge}>
-                            <Text style={styles.servedCheckText}>✓ Served</Text>
+                    {/* 1. TOP SECTION: NEW ITEMS TO PREPARE */}
+                    {newItems.length > 0 ? (
+                      <View style={{ marginBottom: servedItems.length > 0 ? 10 : 0 }}>
+                        <View style={styles.newHeaderRow}>
+                          <Text style={styles.itemsHeaderTitle}>ITEMS TO PREPARE ({newCount}):</Text>
+                          <View style={styles.newTagBadge}>
+                            <Text style={styles.newTagText}>NEW ITEMS</Text>
                           </View>
-                        )}
+                        </View>
+
+                        {newItems.map((item, i) => (
+                          <View key={`new_${i}`} style={styles.itemRow}>
+                            <Text style={styles.itemQty}>{item.quantity}x</Text>
+                            <Text style={styles.itemName}>{item.name}</Text>
+                          </View>
+                        ))}
                       </View>
-                    ))}
+                    ) : (
+                      <Text style={styles.itemsHeaderTitle}>ALL ITEMS PREPARED ({servedCount}):</Text>
+                    )}
+
+                    {/* 2. BOTTOM SECTION: PREVIOUSLY SERVED ITEMS */}
+                    {servedItems.length > 0 && (
+                      <View style={styles.servedSection}>
+                        <Text style={styles.servedHeaderTitle}>PREVIOUSLY SERVED ({servedCount}):</Text>
+                        {servedItems.map((item, i) => (
+                          <View key={`served_${i}`} style={styles.itemRowServed}>
+                            <Text style={styles.itemQtyServed}>{item.quantity}x</Text>
+                            <Text style={styles.itemNameServed}>{item.name}</Text>
+                            <View style={styles.servedCheckBadge}>
+                              <Text style={styles.servedCheckText}>✓ Served</Text>
+                            </View>
+                          </View>
+                        ))}
+                      </View>
+                    )}
                   </View>
 
                   {/* Kitchen Action Buttons (Strict Sequential Flow) */}
@@ -578,12 +602,20 @@ const styles = StyleSheet.create({
   cancelledTitle: { color: '#dc2626', fontWeight: 'bold', fontSize: 12 },
   cancelledSub: { color: '#64748b', fontSize: 11, marginTop: 2 },
   itemsBox: { backgroundColor: '#f8fafc', borderRadius: 8, padding: 10, marginTop: 8, borderWidth: 1, borderColor: '#f1f5f9' },
-  itemsHeaderTitle: { color: '#64748b', fontSize: 11, fontWeight: 'bold', marginBottom: 6 },
+  newHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
+  itemsHeaderTitle: { color: '#0f172a', fontSize: 12, fontWeight: 'bold' },
+  newTagBadge: { backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#10b981', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  newTagText: { color: '#059669', fontSize: 10, fontWeight: 'bold' },
   itemRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 4 },
   itemQty: { color: '#059669', fontWeight: 'bold', fontSize: 16, width: 36 },
-  itemName: { color: '#0f172a', fontSize: 16, fontWeight: '500', flex: 1 },
-  servedCheckBadge: { backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#10b981', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginLeft: 6 },
-  servedCheckText: { color: '#10b981', fontSize: 11, fontWeight: 'bold' },
+  itemName: { color: '#0f172a', fontSize: 16, fontWeight: 'bold', flex: 1 },
+  servedSection: { borderTopWidth: 1, borderTopColor: '#cbd5e1', paddingTop: 8, marginTop: 6 },
+  servedHeaderTitle: { color: '#64748b', fontSize: 11, fontWeight: 'bold', marginBottom: 4 },
+  itemRowServed: { flexDirection: 'row', alignItems: 'center', marginVertical: 3 },
+  itemQtyServed: { color: '#64748b', fontWeight: 'bold', fontSize: 14, width: 36 },
+  itemNameServed: { color: '#64748b', fontSize: 14, flex: 1 },
+  servedCheckBadge: { backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#cbd5e1', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginLeft: 6 },
+  servedCheckText: { color: '#64748b', fontSize: 10, fontWeight: 'bold' },
   actions: { flexDirection: 'row', gap: 8, marginTop: 12 },
   actionBtn: { flex: 1, padding: 10, borderRadius: 8, alignItems: 'center' },
   actionBtnText: { color: 'white', fontWeight: 'bold', fontSize: 13 },

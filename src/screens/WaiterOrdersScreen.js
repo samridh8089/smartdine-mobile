@@ -7,6 +7,31 @@ import { sendSystemAlert, registerPushToken } from '../lib/notifications';
 import { getFormattedOrderId } from '../lib/orderUtils';
 import { startAlarm, stopAlarm, isAlarmActive } from '../lib/alarmManager';
 
+// Helper to consolidate items safely for Waiter delivery screen
+function consolidateItems(itemList = []) {
+  try {
+    if (!Array.isArray(itemList)) return [];
+    const map = new Map();
+
+    itemList.forEach(item => {
+      if (!item) return;
+      const name = String(item.menu_item_name || item.name || 'Item');
+      const qty = Number(item.quantity) || 1;
+
+      if (map.has(name)) {
+        map.get(name).quantity += qty;
+      } else {
+        map.set(name, { name, quantity: qty });
+      }
+    });
+
+    return Array.from(map.values());
+  } catch (e) {
+    console.log('Error consolidating waiter items:', e);
+    return [];
+  }
+}
+
 export default function WaiterOrdersScreen({ route }) {
   const profile = route?.params?.profile || {};
   const restaurantId = profile?.restaurant_id || null;
@@ -31,20 +56,22 @@ export default function WaiterOrdersScreen({ route }) {
           'postgres_changes',
           { event: '*', schema: 'public', table: 'orders' },
           (payload) => {
-            if (payload?.new && payload.new.status === 'ready') {
-              if (!restaurantId || payload.new.restaurant_id === restaurantId) {
-                Vibration.vibrate([0, 800, 400, 800]);
-                startAlarm(
-                  'food_ready',
-                  'FOOD READY TO SERVE',
-                  `Table ${payload.new.table_name || 'N/A'} - Deliver to table now!`
-                );
-                sendSystemAlert(
-                  'FOOD READY TO SERVE',
-                  `Table ${payload.new.table_name || 'N/A'} order is ready for pickup!`
-                );
+            try {
+              if (payload?.new && payload.new.status === 'ready') {
+                if (!restaurantId || payload.new.restaurant_id === restaurantId) {
+                  Vibration.vibrate([0, 800, 400, 800]);
+                  startAlarm(
+                    'food_ready',
+                    'FOOD READY TO SERVE',
+                    `Table ${payload.new.table_name || 'N/A'} - Deliver to table now!`
+                  );
+                  sendSystemAlert(
+                    'FOOD READY TO SERVE',
+                    `Table ${payload.new.table_name || 'N/A'} order is ready for pickup!`
+                  );
+                }
               }
-            }
+            } catch (_) {}
             fetchOrders();
           }
         )
@@ -203,8 +230,13 @@ export default function WaiterOrdersScreen({ route }) {
             </View>
           }
           renderItem={({ item }) => {
-            if (!item) return null;
-            const items = item.order_items || [];
+            if (!item || !item.id) return null;
+            let consolidated = [];
+            try {
+              consolidated = consolidateItems(item.order_items || []);
+            } catch (_) {
+              consolidated = [];
+            }
 
             return (
               <View style={styles.card}>
@@ -220,9 +252,9 @@ export default function WaiterOrdersScreen({ route }) {
                 </Text>
 
                 <View style={styles.itemsBox}>
-                  {items.map((it, idx) => (
+                  {consolidated.map((it, idx) => (
                     <Text key={idx} style={styles.itemText}>
-                      • {it?.quantity || 1}x {it?.menu_item_name || it?.name || 'Item'}
+                      • {it.quantity}x {it.name}
                     </Text>
                   ))}
                 </View>
@@ -249,7 +281,8 @@ function getStatusColor(status) {
     case 'ready': return '#8b5cf6';
     case 'served': return '#10b981';
     case 'completed': return '#64748b';
-    default: return '#0ea5e9';
+    case 'cancelled': return '#ef4444';
+    default: return '#64748b';
   }
 }
 
@@ -277,7 +310,7 @@ const styles = StyleSheet.create({
   statusText: { color: 'white', fontSize: 11, fontWeight: 'bold' },
   metaText: { color: '#64748b', fontSize: 12, marginVertical: 4 },
   itemsBox: { backgroundColor: '#f8fafc', borderRadius: 8, padding: 10, marginVertical: 8, borderWidth: 1, borderColor: '#f1f5f9' },
-  itemText: { color: '#0f172a', fontSize: 14, marginVertical: 2 },
-  serveBtn: { backgroundColor: '#10b981', padding: 12, borderRadius: 8, alignItems: 'center', marginTop: 4 },
-  serveBtnText: { color: 'white', fontWeight: 'bold', fontSize: 14 },
+  itemText: { color: '#0f172a', fontSize: 15, marginVertical: 2, fontWeight: '500' },
+  serveBtn: { backgroundColor: '#059669', padding: 12, borderRadius: 8, alignItems: 'center', marginTop: 8 },
+  serveBtnText: { color: 'white', fontWeight: 'bold', fontSize: 13 },
 });

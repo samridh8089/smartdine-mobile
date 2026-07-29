@@ -1,18 +1,6 @@
 import React, { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Animated } from 'react-native';
+import { View, Text, StyleSheet, Animated, Vibration } from 'react-native';
 import { supabase } from '../lib/supabase';
-import { Audio } from 'expo-av';
-
-// Helper function to safely play notification sound
-async function playSound(soundType) {
-  try {
-    const soundObject = new Audio.Sound();
-    await soundObject.loadAsync(require('../../assets/alarm.mp3'));
-    await soundObject.playAsync();
-  } catch (error) {
-    console.log('Error playing notification sound:', error);
-  }
-}
 
 export default function LiveNotificationListener({ profile }) {
   const [notification, setNotification] = React.useState(null);
@@ -21,26 +9,32 @@ export default function LiveNotificationListener({ profile }) {
   useEffect(() => {
     if (!profile || !profile.restaurant_id) return;
 
-    // Listen for New Orders
     let ordersSubscription;
     let callsSubscription;
     try {
+      // Listen for New Orders
       ordersSubscription = supabase
-        .channel('public:orders')
+        .channel(`public:orders:${profile.restaurant_id}`)
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders', filter: `restaurant_id=eq.${profile.restaurant_id}` }, payload => {
-          if (profile.role === 'kitchen' || profile.role === 'waiter' || profile.role === 'owner') {
-            showNotification('New Order Received!', 'beep');
-          }
+          try {
+            if (profile.role === 'kitchen' || profile.role === 'waiter' || profile.role === 'owner') {
+              showNotification('New Order Received!');
+            }
+          } catch (_) {}
         })
         .subscribe();
 
       // Listen for Waiter Calls
       callsSubscription = supabase
-        .channel('public:customer_requests')
+        .channel(`public:customer_requests:${profile.restaurant_id}`)
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'customer_requests', filter: `restaurant_id=eq.${profile.restaurant_id}` }, payload => {
-          if (profile.role === 'waiter' || profile.role === 'owner') {
-            showNotification(`Table ${payload.new.table_name}: ${payload.new.type === 'request_bill' ? 'Bill Requested' : 'Waiter Called'}`, 'bell');
-          }
+          try {
+            if (profile.role === 'waiter' || profile.role === 'owner') {
+              const tableName = payload?.new?.table_name || 'N/A';
+              const reqType = payload?.new?.type === 'request_bill' ? 'Bill Requested' : 'Waiter Called';
+              showNotification(`Table ${tableName}: ${reqType}`);
+            }
+          } catch (_) {}
         })
         .subscribe();
     } catch (e) {
@@ -57,26 +51,25 @@ export default function LiveNotificationListener({ profile }) {
     };
   }, [profile]);
 
-  const showNotification = async (message, type) => {
-    setNotification(message);
+  const showNotification = (message) => {
+    try {
+      setNotification(message);
+      Vibration.vibrate([0, 500, 200, 500]);
 
-    playSound(type).catch(() => {});
-
-    // Fade in banner
-    Animated.timing(fadeAnim, {
-      toValue: 1,
-      duration: 300,
-      useNativeDriver: true,
-    }).start();
-
-    // Auto-dismiss after 4 seconds
-    setTimeout(() => {
       Animated.timing(fadeAnim, {
-        toValue: 0,
+        toValue: 1,
         duration: 300,
         useNativeDriver: true,
-      }).start(() => setNotification(null));
-    }, 4000);
+      }).start();
+
+      setTimeout(() => {
+        Animated.timing(fadeAnim, {
+          toValue: 0,
+          duration: 300,
+          useNativeDriver: true,
+        }).start(() => setNotification(null));
+      }, 4000);
+    } catch (_) {}
   };
 
   if (!notification) return null;
