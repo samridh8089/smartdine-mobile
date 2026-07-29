@@ -25,7 +25,6 @@ export default function WaiterPunchScreen({ route }) {
   const [searchQuery, setSearchQuery] = useState('');
 
   const [cart, setCart] = useState([]);
-  const [specialInstructions, setSpecialInstructions] = useState('');
   
   // Payment Options
   const [markPaid, setMarkPaid] = useState(false);
@@ -62,185 +61,164 @@ export default function WaiterPunchScreen({ route }) {
         return;
       }
 
-      // Fetch restaurant settings, tables, categories & menu items
-      const [restRes, tblsRes, catsRes, itemsRes] = await Promise.all([
-        supabase.from('restaurants').select('*').eq('id', restId).single(),
-        supabase.from('tables').select('*').eq('restaurant_id', restId),
-        supabase.from('categories').select('*').eq('restaurant_id', restId).order('sort_order', { ascending: true }),
-        supabase.from('menu_items').select('*').eq('restaurant_id', restId).eq('is_available', true)
-      ]);
+      // 1. Fetch Restaurant Info
+      const { data: restData } = await supabase
+        .from('restaurants')
+        .select('*')
+        .eq('id', restId)
+        .single();
+      if (restData) setRestaurant(restData);
 
-      if (restRes.data) setRestaurant(restRes.data);
-      if (tblsRes.data) {
-        setTables(tblsRes.data);
-        if (tblsRes.data.length > 0) {
-          setSelectedTable(tblsRes.data[0]);
-        }
+      // 2. Fetch Tables
+      const { data: tablesData } = await supabase
+        .from('tables')
+        .select('*')
+        .eq('restaurant_id', restId)
+        .order('name');
+      if (Array.isArray(tablesData)) {
+        setTables(tablesData);
+        if (tablesData.length > 0) setSelectedTable(tablesData[0]);
       }
-      if (catsRes.data) setCategories(catsRes.data);
-      if (itemsRes.data) setMenuItems(itemsRes.data);
 
-    } catch (e) {
-      console.log('Error initializing Waiter Punch screen:', e);
-      Alert.alert('Error', 'Failed to load menu catalog or tables.');
+      // 3. Fetch Categories
+      const { data: catData } = await supabase
+        .from('categories')
+        .select('*')
+        .eq('restaurant_id', restId)
+        .order('display_order');
+      if (Array.isArray(catData)) setCategories(catData);
+
+      // 4. Fetch Available Menu Items
+      const { data: menuData } = await supabase
+        .from('menu_items')
+        .select('*')
+        .eq('restaurant_id', restId)
+        .eq('is_available', true)
+        .order('name');
+      if (Array.isArray(menuData)) setMenuItems(menuData);
+
+    } catch (err) {
+      console.log('Error initializing Punch POS:', err);
     } finally {
       setLoading(false);
     }
   };
 
   const handleAddToCart = (item) => {
-    setCart(prev => {
-      const idx = prev.findIndex(c => c.menuItem.id === item.id);
-      if (idx > -1) {
-        const updated = [...prev];
-        updated[idx] = { ...updated[idx], quantity: updated[idx].quantity + 1 };
-        return updated;
+    const existingIndex = cart.findIndex(c => c.menuItem.id === item.id);
+    if (existingIndex > -1) {
+      const updated = [...cart];
+      updated[existingIndex].quantity += 1;
+      setCart(updated);
+    } else {
+      setCart([...cart, { menuItem: item, quantity: 1 }]);
+    }
+  };
+
+  const handleUpdateQuantity = (menuItemId, delta) => {
+    const updated = cart.map(item => {
+      if (item.menuItem.id === menuItemId) {
+        const newQty = item.quantity + delta;
+        return newQty > 0 ? { ...item, quantity: newQty } : null;
       }
-      return [...prev, { menuItem: item, quantity: 1, notes: '' }];
-    });
+      return item;
+    }).filter(Boolean);
+    setCart(updated);
   };
 
-  const handleUpdateQuantity = (itemId, delta) => {
-    setCart(prev => {
-      return prev.map(c => {
-        if (c.menuItem.id === itemId) {
-          const newQty = c.quantity + delta;
-          return newQty > 0 ? { ...c, quantity: newQty } : null;
-        }
-        return c;
-      }).filter(Boolean);
-    });
+  const calculateSubtotal = () => {
+    return cart.reduce((sum, c) => sum + (c.menuItem.price * c.quantity), 0);
   };
 
-  const handleUpdateItemNote = (itemId, notes) => {
-    setCart(prev => prev.map(c => c.menuItem.id === itemId ? { ...c, notes } : c));
+  const calculateGST = (subtotal) => {
+    if (!restaurant?.gst_enabled) return 0;
+    const rate = Number(restaurant?.gst_percentage) || 5;
+    return (subtotal * rate) / 100;
   };
 
-  // Calculations
-  const subtotal = cart.reduce((sum, c) => sum + (c.menuItem.price * c.quantity), 0);
-  
-  const settings = restaurant?.settings || {};
-  const gstEnabled = settings.gst_enabled !== false;
-  const gstPercentage = gstEnabled ? (settings.gst_percentage || 0) : 0;
-  const gstAmount = parseFloat(((subtotal * gstPercentage) / 100).toFixed(2));
-
-  const serviceChargeEnabled = settings.service_charge_enabled !== false;
-  const serviceChargePercentage = serviceChargeEnabled ? (settings.service_charge_percentage || 0) : 0;
-  const serviceChargeAmount = parseFloat(((subtotal * serviceChargePercentage) / 100).toFixed(2));
-
-  const grandTotal = parseFloat((subtotal + gstAmount + serviceChargeAmount).toFixed(2));
+  const subtotal = calculateSubtotal();
+  const gst = calculateGST(subtotal);
+  const grandTotal = subtotal + gst;
 
   const handleSubmitOrder = async () => {
     if (cart.length === 0) {
-      Alert.alert('Empty Cart', 'Please select at least 1 menu item to punch order.');
+      Alert.alert('Cart Empty', 'Please select at least 1 item to punch order.');
       return;
     }
 
     if (orderType === 'dine_in' && !selectedTable) {
-      Alert.alert('Table Required', 'Please select a table for Dine-In orders.');
+      Alert.alert('Select Table', 'Please select a table for Dine-in order.');
       return;
     }
 
     setSubmitting(true);
     try {
-      const targetTableId = orderType === 'takeaway' ? null : (selectedTable?.id || null);
-      const targetTableName = orderType === 'takeaway' ? 'Takeaway Counter' : (selectedTable?.name || 'Table');
-
-      // 1. Insert into orders
       const orderPayload = {
         restaurant_id: restaurantId,
-        table_id: targetTableId,
-        table_name: targetTableName,
-        status: 'new',
-        special_instructions: specialInstructions.trim() || null,
-        subtotal,
-        gst: gstAmount,
-        service_charge: serviceChargeAmount,
-        total: grandTotal,
+        table_id: orderType === 'dine_in' ? selectedTable?.id : null,
+        table_name: orderType === 'dine_in' ? selectedTable?.name : 'Takeaway',
         order_type: orderType,
+        status: 'new',
         payment_status: markPaid ? 'paid' : 'pending',
         payment_method: markPaid ? paymentMethod : null,
-        marked_paid_by: markPaid ? (profile.full_name || 'Waiter') : null,
-        paid_at: markPaid ? new Date().toISOString() : null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        subtotal: Number(subtotal.toFixed(2)),
+        gst: Number(gst.toFixed(2)),
+        total: Number(grandTotal.toFixed(2)),
+        placed_by: profile.full_name || profile.role || 'Staff POS',
       };
 
-      const { data: ordData, error: ordErr } = await supabase
+      const { data: createdOrder, error: orderError } = await supabase
         .from('orders')
-        .insert([orderPayload])
-        .select();
+        .insert(orderPayload)
+        .select()
+        .single();
 
-      if (ordErr || !ordData || ordData.length === 0) {
-        throw new Error(ordErr?.message || 'Failed to insert order.');
-      }
+      if (orderError) throw orderError;
 
-      const newOrder = ordData[0];
-
-      // 2. Insert batch #1 into order_batches
-      const { data: batchData, error: batchErr } = await supabase
-        .from('order_batches')
-        .insert([{
-          order_id: newOrder.id,
-          batch_number: 1,
-          status: 'new',
-          special_instructions: specialInstructions.trim() || null,
-          created_at: new Date().toISOString()
-        }])
-        .select();
-
-      const batchId = batchData?.[0]?.id || null;
-
-      // 3. Insert items into order_items
+      // Insert Items
       const itemsPayload = cart.map(c => ({
-        order_id: newOrder.id,
-        batch_id: batchId,
+        order_id: createdOrder.id,
         menu_item_id: c.menuItem.id,
         menu_item_name: c.menuItem.name,
         quantity: c.quantity,
         price: c.menuItem.price,
-        notes: c.notes || null,
-        created_at: new Date().toISOString()
       }));
 
-      const { error: itemsErr } = await supabase
+      const { error: itemsError } = await supabase
         .from('order_items')
         .insert(itemsPayload);
 
-      if (itemsErr) {
-        console.log('Error inserting order items:', itemsErr);
-      }
+      if (itemsError) throw itemsError;
 
-      // 4. Send Realtime Notification to Kitchen / KDS
       sendPushToRestaurantStaff(
         restaurantId,
-        '🔔 NEW KITCHEN ORDER!',
-        `${targetTableName} • ${orderType === 'takeaway' ? '📦 Takeaway' : '🍽️ Dine-in'} • Total: ₹${grandTotal.toFixed(2)}`,
-        { orderId: newOrder.id }
-      );
+        'NEW STAFF ORDER PUNCHED',
+        `Table ${orderPayload.table_name} - Total: ₹${grandTotal.toFixed(2)}`,
+        { orderId: createdOrder.id }
+      ).catch(() => {});
 
       Alert.alert(
-        'Order Punched! 🚀',
-        `Order for ${targetTableName} has been sent directly to the kitchen.`,
-        [{ text: 'OK', onPress: () => {
-          setCart([]);
-          setSpecialInstructions('');
-          setMarkPaid(false);
-        }}]
+        'Order Placed Successfully',
+        `Order #${createdOrder.id.slice(0, 8)} sent to Kitchen KDS.`,
+        [{ text: 'OK', onPress: () => setCart([]) }]
       );
 
-    } catch (e) {
-      console.log('Error punching order:', e);
-      Alert.alert('Punch Error', e.message || 'Failed to submit order.');
+    } catch (err) {
+      Alert.alert('Punch Failed', err.message || 'Failed to place order.');
     } finally {
       setSubmitting(false);
     }
   };
 
-  const filteredMenuItems = menuItems.filter(item => {
-    const matchesCat = selectedCategoryId === 'all' || item.category_id === selectedCategoryId;
-    const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesCat && matchesSearch;
+  const safeMenuItems = menuItems || [];
+  const safeCategories = categories || [];
+  const safeTables = tables || [];
+
+  const filteredMenuItems = safeMenuItems.filter(item => {
+    if (!item) return false;
+    const matchesCategory = selectedCategoryId === 'all' || item.category_id === selectedCategoryId;
+    const matchesSearch = item.name?.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesCategory && matchesSearch;
   });
 
   if (loading) {
@@ -259,7 +237,7 @@ export default function WaiterPunchScreen({ route }) {
     >
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>➕ Punch New Order (POS)</Text>
+        <Text style={styles.title}>Punch New Order (POS)</Text>
         <Text style={styles.subtitle}>{restaurant?.name || 'SmartDine Staff POS'}</Text>
       </View>
 
@@ -273,7 +251,7 @@ export default function WaiterPunchScreen({ route }) {
               onPress={() => setOrderType('dine_in')}
             >
               <Text style={[styles.typeBtnText, orderType === 'dine_in' && styles.typeBtnTextActive]}>
-                🍽️ Dine-in
+                Dine-in
               </Text>
             </TouchableOpacity>
             <TouchableOpacity 
@@ -281,18 +259,18 @@ export default function WaiterPunchScreen({ route }) {
               onPress={() => setOrderType('takeaway')}
             >
               <Text style={[styles.typeBtnText, orderType === 'takeaway' && styles.typeBtnTextActive]}>
-                📦 Takeaway
+                Takeaway
               </Text>
             </TouchableOpacity>
           </View>
         </View>
 
-        {/* Horizontal Table Selector (For Dine-in) */}
+        {/* Table Selector */}
         {orderType === 'dine_in' && (
           <View style={{ marginTop: 10 }}>
             <Text style={styles.sectionLabel}>SELECT TABLE:</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 6 }}>
-              {tables.map(tbl => (
+              {safeTables.map(tbl => (
                 <TouchableOpacity
                   key={tbl.id}
                   style={[
@@ -318,8 +296,8 @@ export default function WaiterPunchScreen({ route }) {
       <View style={styles.menuFilterSection}>
         <TextInput
           style={styles.searchInput}
-          placeholder="🔍 Search food item..."
-          placeholderTextColor="#64748b"
+          placeholder="Search food item..."
+          placeholderTextColor="#94a3b8"
           value={searchQuery}
           onChangeText={setSearchQuery}
         />
@@ -333,7 +311,7 @@ export default function WaiterPunchScreen({ route }) {
               All Items
             </Text>
           </TouchableOpacity>
-          {categories.map(cat => (
+          {safeCategories.map(cat => (
             <TouchableOpacity
               key={cat.id}
               style={[styles.catPill, selectedCategoryId === cat.id && styles.catPillActive]}
@@ -347,11 +325,12 @@ export default function WaiterPunchScreen({ route }) {
         </ScrollView>
       </View>
 
-      {/* Main Grid: Menu Item Catalog List */}
+      {/* Main Grid: Menu Catalog */}
       <FlatList
         data={filteredMenuItems}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => item?.id || Math.random().toString()}
         renderItem={({ item }) => {
+          if (!item) return null;
           const cartItem = cart.find(c => c.menuItem.id === item.id);
           const qty = cartItem ? cartItem.quantity : 0;
 
@@ -359,7 +338,7 @@ export default function WaiterPunchScreen({ route }) {
             <View style={styles.menuCard}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.menuItemName}>{item.name}</Text>
-                <Text style={styles.menuItemPrice}>₹{Number(item.price).toFixed(2)}</Text>
+                <Text style={styles.menuItemPrice}>₹{Number(item.price || 0).toFixed(2)}</Text>
               </View>
 
               {qty > 0 ? (
@@ -386,10 +365,10 @@ export default function WaiterPunchScreen({ route }) {
         }
       />
 
-      {/* Cart Summary Drawer at Bottom */}
+      {/* Cart Summary Drawer */}
       {cart.length > 0 && (
         <View style={styles.cartFooter}>
-          <ScrollView maxH={140} style={styles.cartItemsScroll}>
+          <ScrollView style={styles.cartItemsScroll}>
             {cart.map(c => (
               <View key={c.menuItem.id} style={styles.cartRow}>
                 <Text style={styles.cartQty}>{c.quantity}x</Text>
@@ -406,13 +385,13 @@ export default function WaiterPunchScreen({ route }) {
             <Text style={styles.totalValue}>₹{grandTotal.toFixed(2)}</Text>
           </View>
 
-          {/* Quick Mark Paid Switch */}
+          {/* Quick Mark Paid Toggle */}
           <TouchableOpacity 
             style={[styles.paidToggle, markPaid && styles.paidToggleActive]}
             onPress={() => setMarkPaid(!markPaid)}
           >
-            <Text style={styles.paidToggleText}>
-              {markPaid ? '✅ Marking as PAID (Cash/UPI)' : '⭕ Mark Paid Immediately?'}
+            <Text style={[styles.paidToggleText, markPaid && { color: '#10b981' }]}>
+              {markPaid ? 'Marking as PAID (Cash/UPI)' : 'Mark Paid Immediately?'}
             </Text>
           </TouchableOpacity>
 
@@ -425,7 +404,7 @@ export default function WaiterPunchScreen({ route }) {
               <ActivityIndicator color="white" />
             ) : (
               <Text style={styles.punchSubmitText}>
-                🚀 Punch Order to Kitchen (₹{grandTotal.toFixed(2)})
+                Punch Order to Kitchen (₹{grandTotal.toFixed(2)})
               </Text>
             )}
           </TouchableOpacity>
@@ -438,80 +417,87 @@ export default function WaiterPunchScreen({ route }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0f172a',
+    backgroundColor: '#f8fafc',
     paddingTop: 45,
   },
   loadingContainer: {
     flex: 1,
-    backgroundColor: '#0f172a',
+    backgroundColor: '#f8fafc',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  loadingText: { color: '#94a3b8', marginTop: 12, fontSize: 14 },
+  loadingText: { color: '#64748b', marginTop: 12, fontSize: 14 },
   header: {
     paddingHorizontal: 16,
     paddingBottom: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#1e293b',
+    borderBottomColor: '#e2e8f0',
+    backgroundColor: '#ffffff',
   },
-  title: { fontSize: 20, fontWeight: 'bold', color: '#0ea5e9' },
+  title: { fontSize: 20, fontWeight: 'bold', color: '#0f172a' },
   subtitle: { fontSize: 12, color: '#64748b' },
   topSection: {
-    backgroundColor: '#1e293b',
+    backgroundColor: '#ffffff',
     padding: 12,
     marginHorizontal: 16,
     marginTop: 10,
     borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   orderTypeContainer: { flexDirection: 'row', gap: 8, flex: 1 },
   typeBtn: {
     flex: 1,
-    backgroundColor: '#334155',
+    backgroundColor: '#f1f5f9',
     paddingVertical: 8,
     borderRadius: 8,
     alignItems: 'center',
-  },
-  typeBtnActiveDine: { backgroundColor: '#10b981' },
-  typeBtnActiveTakeaway: { backgroundColor: '#8b5cf6' },
-  typeBtnText: { color: '#94a3b8', fontSize: 13, fontWeight: 'bold' },
-  typeBtnTextActive: { color: 'white' },
-  sectionLabel: { color: '#64748b', fontSize: 10, fontWeight: 'bold', tracking: 1 },
-  tablePill: {
-    backgroundColor: '#0f172a',
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#cbd5e1',
+  },
+  typeBtnActiveDine: { backgroundColor: '#10b981', borderColor: '#10b981' },
+  typeBtnActiveTakeaway: { backgroundColor: '#8b5cf6', borderColor: '#8b5cf6' },
+  typeBtnText: { color: '#64748b', fontSize: 13, fontWeight: 'bold' },
+  typeBtnTextActive: { color: 'white' },
+  sectionLabel: { color: '#64748b', fontSize: 10, fontWeight: 'bold' },
+  tablePill: {
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
     paddingHorizontal: 14,
     paddingVertical: 6,
     borderRadius: 8,
     marginRight: 8,
   },
   tablePillActive: { backgroundColor: '#0ea5e9', borderColor: '#0ea5e9' },
-  tablePillText: { color: '#94a3b8', fontSize: 12, fontWeight: 'bold' },
+  tablePillText: { color: '#64748b', fontSize: 12, fontWeight: 'bold' },
   tablePillTextActive: { color: 'white' },
   menuFilterSection: { paddingHorizontal: 16, marginVertical: 10 },
   searchInput: {
-    backgroundColor: '#1e293b',
-    color: 'white',
+    backgroundColor: '#ffffff',
+    color: '#0f172a',
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 10,
     fontSize: 13,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#cbd5e1',
   },
   catPill: {
-    backgroundColor: '#1e293b',
+    backgroundColor: '#ffffff',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 8,
     marginRight: 6,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
-  catPillActive: { backgroundColor: '#38bdf8' },
-  catPillText: { color: '#94a3b8', fontSize: 11, fontWeight: 'bold' },
-  catPillTextActive: { color: '#0f172a' },
+  catPillActive: { backgroundColor: '#0ea5e9', borderColor: '#0ea5e9' },
+  catPillText: { color: '#64748b', fontSize: 11, fontWeight: 'bold' },
+  catPillTextActive: { color: 'white' },
   menuCard: {
-    backgroundColor: '#1e293b',
+    backgroundColor: '#ffffff',
     padding: 12,
     borderRadius: 10,
     marginBottom: 8,
@@ -519,37 +505,42 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#e2e8f0',
   },
-  menuItemName: { color: 'white', fontSize: 14, fontWeight: 'bold' },
+  menuItemName: { color: '#0f172a', fontSize: 14, fontWeight: 'bold' },
   menuItemPrice: { color: '#10b981', fontSize: 12, fontWeight: 'bold', marginTop: 2 },
-  addBtn: { backgroundColor: '#10b98122', borderWidth: 1, borderColor: '#10b981', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 6 },
+  addBtn: { backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#10b981', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 6 },
   addBtnText: { color: '#10b981', fontWeight: 'bold', fontSize: 12 },
-  qtyContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#0f172a', borderRadius: 6, padding: 2 },
-  qtyMinusBtn: { backgroundColor: '#334155', width: 26, height: 26, borderRadius: 4, justifyContent: 'center', alignItems: 'center' },
+  qtyContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#f1f5f9', borderRadius: 6, padding: 2 },
+  qtyMinusBtn: { backgroundColor: '#e2e8f0', width: 26, height: 26, borderRadius: 4, justifyContent: 'center', alignItems: 'center' },
   qtyPlusBtn: { backgroundColor: '#10b981', width: 26, height: 26, borderRadius: 4, justifyContent: 'center', alignItems: 'center' },
-  qtyBtnText: { color: 'white', fontWeight: 'bold', fontSize: 14 },
-  qtyText: { color: 'white', fontWeight: 'bold', fontSize: 13, paddingHorizontal: 8 },
+  qtyBtnText: { color: '#0f172a', fontWeight: 'bold', fontSize: 14 },
+  qtyText: { color: '#0f172a', fontWeight: 'bold', fontSize: 13, paddingHorizontal: 8 },
   emptyText: { color: '#64748b', textAlign: 'center', marginTop: 40, fontSize: 13 },
   cartFooter: {
-    backgroundColor: '#1e293b',
+    backgroundColor: '#ffffff',
     borderTopWidth: 2,
     borderTopColor: '#0ea5e9',
     padding: 14,
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    elevation: 8,
   },
   cartItemsScroll: { maxHeight: 80, marginBottom: 8 },
   cartRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
   cartQty: { color: '#0ea5e9', fontWeight: 'bold', fontSize: 12, width: 24 },
-  cartItemName: { color: '#f8fafc', fontSize: 12, flex: 1 },
-  cartItemPrice: { color: '#94a3b8', fontSize: 12, fontWeight: 'bold' },
-  totalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#334155', paddingTop: 6, marginBottom: 8 },
-  totalLabel: { color: 'white', fontSize: 13, fontWeight: 'bold' },
+  cartItemName: { color: '#0f172a', fontSize: 12, flex: 1 },
+  cartItemPrice: { color: '#64748b', fontSize: 12, fontWeight: 'bold' },
+  totalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#e2e8f0', paddingTop: 6, marginBottom: 8 },
+  totalLabel: { color: '#0f172a', fontSize: 13, fontWeight: 'bold' },
   totalValue: { color: '#10b981', fontSize: 18, fontWeight: 'bold' },
-  paidToggle: { backgroundColor: '#0f172a', padding: 8, borderRadius: 6, alignItems: 'center', marginBottom: 8, borderWidth: 1, borderColor: '#334155' },
-  paidToggleActive: { borderColor: '#10b981', backgroundColor: '#10b98115' },
-  paidToggleText: { color: '#38bdf8', fontSize: 11, fontWeight: 'bold' },
+  paidToggle: { backgroundColor: '#f8fafc', padding: 8, borderRadius: 6, alignItems: 'center', marginBottom: 8, borderWidth: 1, borderColor: '#cbd5e1' },
+  paidToggleActive: { borderColor: '#10b981', backgroundColor: '#f0fdf4' },
+  paidToggleText: { color: '#0ea5e9', fontSize: 11, fontWeight: 'bold' },
   punchSubmitBtn: { backgroundColor: '#0ea5e9', padding: 12, borderRadius: 10, alignItems: 'center' },
   punchSubmitText: { color: 'white', fontSize: 14, fontWeight: 'bold' },
 });

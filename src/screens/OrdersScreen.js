@@ -4,7 +4,6 @@ import { supabase } from '../lib/supabase';
 import { sendSystemAlert, registerPushToken } from '../lib/notifications';
 import { getFormattedOrderId } from '../lib/orderUtils';
 import { startAlarm, stopAlarm } from '../lib/alarmManager';
-import { checkAndPromptBatteryOptimization } from '../lib/batteryManager';
 
 export default function OrdersScreen({ route }) {
   const profile = route?.params?.profile || {};
@@ -25,7 +24,6 @@ export default function OrdersScreen({ route }) {
     if (profile?.id) {
       registerPushToken(profile.id).catch(() => {});
     }
-    checkAndPromptBatteryOptimization().catch(() => {});
     fetchRestaurantName();
     fetchOrders();
 
@@ -43,12 +41,12 @@ export default function OrdersScreen({ route }) {
                 Vibration.vibrate([0, 1000, 500, 1000]);
                 startAlarm(
                   'new_order',
-                  '🛒 NEW CUSTOMER ORDER!',
-                  `Table ${payload.new?.table_name || 'N/A'} • Total: ₹${payload.new?.total || 0}`
+                  'NEW CUSTOMER ORDER',
+                  `Table ${payload.new?.table_name || 'N/A'} - Total: ₹${payload.new?.total || 0}`
                 );
                 sendSystemAlert(
-                  'NEW CUSTOMER ORDER!',
-                  `Table ${payload.new?.table_name || 'N/A'} • Total: ₹${payload.new?.total || 0}`
+                  'NEW CUSTOMER ORDER',
+                  `Table ${payload.new?.table_name || 'N/A'} - Total: ₹${payload.new?.total || 0}`
                 );
               }
               fetchOrders();
@@ -67,14 +65,10 @@ export default function OrdersScreen({ route }) {
 
     return () => {
       if (channel) {
-        try {
-          supabase.removeChannel(channel);
-        } catch (_) {}
+        try { supabase.removeChannel(channel); } catch (_) {}
       }
       if (interval) clearInterval(interval);
-      try {
-        stopAlarm();
-      } catch (_) {}
+      try { stopAlarm(); } catch (_) {}
     };
   }, [restaurantId]);
 
@@ -114,12 +108,12 @@ export default function OrdersScreen({ route }) {
               if (ord.status === 'new') {
                 startAlarm(
                   'new_order',
-                  'NEW CUSTOMER ORDER!',
-                  `Table ${ord.table_name || 'N/A'} • Total: ₹${ord.total || 0}`
+                  'NEW CUSTOMER ORDER',
+                  `Table ${ord.table_name || 'N/A'} - Total: ₹${ord.total || 0}`
                 );
                 sendSystemAlert(
-                  'NEW CUSTOMER ORDER!',
-                  `Table ${ord.table_name || 'N/A'} • Total: ₹${ord.total || 0}`
+                  'NEW CUSTOMER ORDER',
+                  `Table ${ord.table_name || 'N/A'} - Total: ₹${ord.total || 0}`
                 );
               }
             }
@@ -222,7 +216,7 @@ export default function OrdersScreen({ route }) {
 
         {isAlarmActive() && (
           <TouchableOpacity onPress={() => stopAlarm()} style={styles.stopAlarmBtn}>
-            <Text style={styles.stopAlarmText}>🔕 STOP ALARM</Text>
+            <Text style={styles.stopAlarmText}>STOP ALARM</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -299,7 +293,7 @@ export default function OrdersScreen({ route }) {
                   {/* Cancellation Details Banner */}
                   {order.status === 'cancelled' && (
                     <View style={styles.cancelledBanner}>
-                      <Text style={styles.cancelledTitle}>🚫 Order Cancelled</Text>
+                      <Text style={styles.cancelledTitle}>Order Cancelled</Text>
                       {order.cancelled_by ? <Text style={styles.cancelledSub}>• Cancelled By: {order.cancelled_by}</Text> : null}
                       {order.cancellation_reason ? <Text style={styles.cancelledSub}>• Reason: "{order.cancellation_reason}"</Text> : null}
                     </View>
@@ -308,12 +302,12 @@ export default function OrdersScreen({ route }) {
                   {/* Payment Verification Banner */}
                   {order.payment_status === 'customer_marked_paid' && order.status !== 'cancelled' && (
                     <View style={styles.paymentAlert}>
-                      <Text style={styles.paymentAlertText}>⚠️ Customer marked payment as complete!</Text>
+                      <Text style={styles.paymentAlertText}>Customer marked payment as complete!</Text>
                       <TouchableOpacity 
                         style={styles.verifyBtn}
                         onPress={() => updatePaymentStatus(order.id, 'paid')}
                       >
-                        <Text style={styles.verifyBtnText}>Verify & Confirm Paid ✅</Text>
+                        <Text style={styles.verifyBtnText}>Verify & Confirm Paid</Text>
                       </TouchableOpacity>
                     </View>
                   )}
@@ -386,7 +380,7 @@ export default function OrdersScreen({ route }) {
             <TextInput
               style={styles.modalInput}
               placeholder="e.g., Item Out of Stock / Customer Changed Mind"
-              placeholderTextColor="#64748b"
+              placeholderTextColor="#94a3b8"
               value={cancellationReason}
               onChangeText={setCancellationReason}
             />
@@ -418,66 +412,66 @@ function getStatusColor(status) {
     case 'preparing': return '#3b82f6';
     case 'ready': return '#8b5cf6';
     case 'served': return '#10b981';
-    case 'completed': return '#475569';
-    case 'cancelled': return '#991b1b';
+    case 'completed': return '#64748b';
+    case 'cancelled': return '#94a3b8';
     default: return '#64748b';
   }
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0f172a', paddingTop: 50 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: '#1e293b' },
-  title: { fontSize: 20, fontWeight: 'bold', color: '#f8fafc' },
-  subtitle: { fontSize: 12, color: '#94a3b8' },
+  container: { flex: 1, backgroundColor: '#f8fafc', paddingTop: 50 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: '#e2e8f0', backgroundColor: '#ffffff' },
+  title: { fontSize: 20, fontWeight: 'bold', color: '#0f172a' },
+  subtitle: { fontSize: 12, color: '#64748b' },
   stopAlarmBtn: { backgroundColor: '#ef4444', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
   stopAlarmText: { color: 'white', fontWeight: 'bold', fontSize: 12 },
-  tabsContainer: { flexDirection: 'row', backgroundColor: '#1e293b', margin: 12, borderRadius: 8, padding: 4 },
+  tabsContainer: { flexDirection: 'row', backgroundColor: '#e2e8f0', margin: 12, borderRadius: 8, padding: 4 },
   tab: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 6 },
   activeTab: { backgroundColor: '#0ea5e9' },
-  tabText: { color: '#94a3b8', fontWeight: 'bold', fontSize: 13 },
+  tabText: { color: '#64748b', fontWeight: 'bold', fontSize: 13 },
   activeTabText: { color: 'white' },
   loadingBox: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  loadingText: { color: '#94a3b8', marginTop: 12 },
+  loadingText: { color: '#64748b', marginTop: 12 },
   scrollContent: { padding: 12 },
   emptyState: { padding: 40, alignItems: 'center' },
   emptyText: { color: '#64748b', fontSize: 15 },
-  orderCard: { backgroundColor: '#1e293b', borderRadius: 12, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: '#334155' },
+  orderCard: { backgroundColor: '#ffffff', borderRadius: 12, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: '#e2e8f0', shadowColor: '#0f172a', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 2 },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  tableName: { fontSize: 18, fontWeight: 'bold', color: '#f8fafc' },
+  tableName: { fontSize: 18, fontWeight: 'bold', color: '#0f172a' },
   takeawayBadge: { backgroundColor: '#8b5cf6', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginLeft: 8 },
   takeawayText: { color: 'white', fontSize: 10, fontWeight: 'bold' },
   statusBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
   statusText: { color: 'white', fontSize: 11, fontWeight: 'bold' },
-  metaText: { color: '#94a3b8', fontSize: 12, marginVertical: 4 },
-  cancelledBanner: { backgroundColor: 'rgba(239, 68, 68, 0.1)', borderColor: '#ef4444', borderWidth: 1, borderRadius: 8, padding: 8, marginVertical: 6 },
-  cancelledTitle: { color: '#ef4444', fontWeight: 'bold', fontSize: 12 },
-  cancelledSub: { color: '#94a3b8', fontSize: 11, marginTop: 2 },
-  paymentAlert: { backgroundColor: 'rgba(245, 158, 11, 0.15)', borderColor: '#f59e0b', borderWidth: 1, borderRadius: 8, padding: 10, marginVertical: 6 },
-  paymentAlertText: { color: '#fbbf24', fontWeight: 'bold', fontSize: 12, marginBottom: 6 },
+  metaText: { color: '#64748b', fontSize: 12, marginVertical: 4 },
+  cancelledBanner: { backgroundColor: '#fef2f2', borderColor: '#fca5a5', borderWidth: 1, borderRadius: 8, padding: 8, marginVertical: 6 },
+  cancelledTitle: { color: '#dc2626', fontWeight: 'bold', fontSize: 12 },
+  cancelledSub: { color: '#64748b', fontSize: 11, marginTop: 2 },
+  paymentAlert: { backgroundColor: '#fffbeb', borderColor: '#fde68a', borderWidth: 1, borderRadius: 8, padding: 10, marginVertical: 6 },
+  paymentAlertText: { color: '#d97706', fontWeight: 'bold', fontSize: 12, marginBottom: 6 },
   verifyBtn: { backgroundColor: '#f59e0b', padding: 8, borderRadius: 6, alignItems: 'center' },
-  verifyBtnText: { color: '#0f172a', fontWeight: 'bold', fontSize: 12 },
-  itemsBox: { backgroundColor: '#0f172a', borderRadius: 8, padding: 10, marginTop: 8 },
+  verifyBtnText: { color: '#ffffff', fontWeight: 'bold', fontSize: 12 },
+  itemsBox: { backgroundColor: '#f8fafc', borderRadius: 8, padding: 10, marginTop: 8, borderWidth: 1, borderColor: '#f1f5f9' },
   itemsHeaderTitle: { color: '#64748b', fontSize: 11, fontWeight: 'bold', marginBottom: 6 },
   itemRow: { flexDirection: 'row', justifyContent: 'space-between', marginVertical: 2 },
   itemQty: { color: '#0ea5e9', fontWeight: 'bold', width: 28 },
-  itemName: { color: '#f8fafc', flex: 1 },
-  itemPrice: { color: '#94a3b8' },
-  divider: { height: 1, backgroundColor: '#1e293b', marginVertical: 6 },
+  itemName: { color: '#0f172a', flex: 1 },
+  itemPrice: { color: '#64748b' },
+  divider: { height: 1, backgroundColor: '#e2e8f0', marginVertical: 6 },
   summaryRow: { flexDirection: 'row', justifyContent: 'space-between', marginVertical: 2 },
   summaryLabel: { color: '#64748b', fontSize: 12 },
-  summaryValue: { color: '#94a3b8', fontSize: 12 },
-  grandTotalLabel: { color: '#f8fafc', fontWeight: 'bold', fontSize: 14 },
+  summaryValue: { color: '#475569', fontSize: 12 },
+  grandTotalLabel: { color: '#0f172a', fontWeight: 'bold', fontSize: 14 },
   grandTotalValue: { color: '#10b981', fontWeight: 'bold', fontSize: 16 },
   actions: { flexDirection: 'row', gap: 8, marginTop: 10 },
   actionBtn: { flex: 1, padding: 10, borderRadius: 8, alignItems: 'center' },
   actionBtnText: { color: 'white', fontWeight: 'bold', fontSize: 13 },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', padding: 20 },
-  modalBox: { backgroundColor: '#1e293b', borderRadius: 12, padding: 20, borderWidth: 1, borderColor: '#334155' },
-  modalTitle: { color: '#f8fafc', fontSize: 16, fontWeight: 'bold', marginBottom: 12 },
-  modalInput: { backgroundColor: '#0f172a', color: '#f8fafc', borderWidth: 1, borderColor: '#334155', borderRadius: 8, padding: 12, marginBottom: 16 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 20 },
+  modalBox: { backgroundColor: '#ffffff', borderRadius: 12, padding: 20, borderWidth: 1, borderColor: '#e2e8f0' },
+  modalTitle: { color: '#0f172a', fontSize: 16, fontWeight: 'bold', marginBottom: 12 },
+  modalInput: { backgroundColor: '#f8fafc', color: '#0f172a', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, padding: 12, marginBottom: 16 },
   modalActions: { flexDirection: 'row', gap: 10 },
-  modalCancelBtn: { flex: 1, padding: 12, borderRadius: 8, backgroundColor: '#334155', alignItems: 'center' },
-  modalCancelText: { color: '#94a3b8', fontWeight: 'bold' },
+  modalCancelBtn: { flex: 1, padding: 12, borderRadius: 8, backgroundColor: '#e2e8f0', alignItems: 'center' },
+  modalCancelText: { color: '#475569', fontWeight: 'bold' },
   modalConfirmBtn: { flex: 1, padding: 12, borderRadius: 8, backgroundColor: '#ef4444', alignItems: 'center' },
   modalConfirmText: { color: 'white', fontWeight: 'bold' },
 });

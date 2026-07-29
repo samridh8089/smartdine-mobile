@@ -10,7 +10,7 @@ import { supabase } from '../lib/supabase';
 const Tab = createBottomTabNavigator();
 
 function SettingsScreen({ route }) {
-  const profile = route.params?.profile || {};
+  const profile = route?.params?.profile || {};
 
   return (
     <View style={styles.container}>
@@ -33,18 +33,25 @@ function SettingsScreen({ route }) {
 }
 
 export default function MainTabNavigator({ route }) {
-  const profile = route.params?.profile || {};
+  const profile = route?.params?.profile || {};
 
   return (
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: '#1e293b',
-          borderTopColor: '#334155',
+          backgroundColor: '#ffffff',
+          borderTopColor: '#e2e8f0',
+          height: 60,
+          paddingBottom: 8,
+          paddingTop: 6,
         },
         tabBarActiveTintColor: '#0ea5e9',
-        tabBarInactiveTintColor: '#94a3b8',
+        tabBarInactiveTintColor: '#64748b',
+        tabBarLabelStyle: {
+          fontSize: 12,
+          fontWeight: '600',
+        },
       }}
     >
       <Tab.Screen 
@@ -63,7 +70,7 @@ export default function MainTabNavigator({ route }) {
         name="PunchOrder" 
         component={WaiterPunchScreen} 
         initialParams={{ profile }}
-        options={{ tabBarLabel: '➕ Punch Order' }}
+        options={{ tabBarLabel: 'Punch Order' }}
       />
       <Tab.Screen 
         name="Kitchen" 
@@ -84,30 +91,30 @@ export default function MainTabNavigator({ route }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0f172a',
+    backgroundColor: '#f8fafc',
     padding: 24,
     justifyContent: 'center',
     alignItems: 'center',
   },
   profileCard: {
-    backgroundColor: '#1e293b',
+    backgroundColor: '#ffffff',
     padding: 24,
     borderRadius: 16,
     width: '100%',
     alignItems: 'center',
     marginBottom: 32,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#e2e8f0',
   },
   name: {
     fontSize: 22,
     fontWeight: 'bold',
-    color: '#f8fafc',
+    color: '#0f172a',
     marginBottom: 4,
   },
   email: {
     fontSize: 14,
-    color: '#94a3b8',
+    color: '#64748b',
     marginBottom: 16,
   },
   roleBadge: {

@@ -38,7 +38,7 @@ class RootErrorBoundary extends React.Component {
       return (
         <View style={styles.container}>
           <ScrollView contentContainerStyle={styles.content}>
-            <Text style={styles.title}>🚨 App Launch Error</Text>
+            <Text style={styles.title}>App Launch Error</Text>
             <Text style={styles.label}>Error Details:</Text>
             <Text style={styles.code}>{errStr}</Text>
             <Text style={styles.label}>Stack Trace:</Text>
@@ -64,7 +64,7 @@ registerRootComponent(Root);
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0f172a',
+    backgroundColor: '#f8fafc',
   },
   content: {
     padding: 24,
@@ -72,30 +72,34 @@ const styles = StyleSheet.create({
   },
   title: {
     color: '#ef4444',
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: 'bold',
     marginBottom: 16,
   },
   label: {
-    color: '#fbbf24',
+    color: '#0ea5e9',
     fontSize: 14,
     fontWeight: 'bold',
     marginTop: 12,
     marginBottom: 6,
   },
   code: {
-    color: '#f8fafc',
+    color: '#0f172a',
     fontSize: 13,
     fontFamily: 'monospace',
-    backgroundColor: '#1e293b',
+    backgroundColor: '#ffffff',
+    borderColor: '#e2e8f0',
+    borderWidth: 1,
     padding: 12,
     borderRadius: 8,
   },
   stack: {
-    color: '#94a3b8',
+    color: '#64748b',
     fontSize: 11,
     fontFamily: 'monospace',
-    backgroundColor: '#1e293b',
+    backgroundColor: '#ffffff',
+    borderColor: '#e2e8f0',
+    borderWidth: 1,
     padding: 12,
     borderRadius: 8,
   },

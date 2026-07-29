@@ -105,7 +105,7 @@ export default function LoginScreen({ navigation }) {
     return (
       <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
         <ActivityIndicator size="large" color="#0ea5e9" />
-        <Text style={{ color: '#94a3b8', marginTop: 12, fontSize: 16 }}>Loading SmartDine...</Text>
+        <Text style={{ color: '#64748b', marginTop: 12, fontSize: 16 }}>Loading SmartDine...</Text>
       </View>
     );
   }
@@ -126,7 +126,7 @@ export default function LoginScreen({ navigation }) {
           <TextInput
             style={styles.input}
             placeholder="Enter your email"
-            placeholderTextColor="#64748b"
+            placeholderTextColor="#94a3b8"
             value={email}
             onChangeText={setEmail}
             autoCapitalize="none"
@@ -139,7 +139,7 @@ export default function LoginScreen({ navigation }) {
           <TextInput
             style={styles.input}
             placeholder="Enter your password"
-            placeholderTextColor="#64748b"
+            placeholderTextColor="#94a3b8"
             value={password}
             onChangeText={setPassword}
             secureTextEntry
@@ -165,16 +165,21 @@ export default function LoginScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0f172a',
+    backgroundColor: '#f8fafc',
     justifyContent: 'center',
     padding: 24,
   },
   formContainer: {
-    backgroundColor: '#1e293b',
+    backgroundColor: '#ffffff',
     padding: 24,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#e2e8f0',
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
   },
   header: {
     alignItems: 'center',
@@ -188,24 +193,24 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontSize: 14,
-    color: '#94a3b8',
+    color: '#64748b',
   },
   inputGroup: {
     marginBottom: 20,
   },
   label: {
-    color: '#e2e8f0',
+    color: '#0f172a',
     fontSize: 14,
     fontWeight: '500',
     marginBottom: 8,
   },
   input: {
-    backgroundColor: '#0f172a',
+    backgroundColor: '#f8fafc',
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#cbd5e1',
     borderRadius: 8,
     padding: 12,
-    color: '#f8fafc',
+    color: '#0f172a',
     fontSize: 16,
   },
   loginButton: {

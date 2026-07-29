@@ -1,13 +1,16 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Animated } from 'react-native';
 import { supabase } from '../lib/supabase';
+import { Audio } from 'expo-av';
 
-// expo-av loaded lazily inside function to prevent crash if native module unavailable
-function getAudio() {
+// Helper function to safely play notification sound
+async function playSound(soundType) {
   try {
-    return require('expo-av')?.Audio || null;
-  } catch (e) {
-    return null;
+    const soundObject = new Audio.Sound();
+    await soundObject.loadAsync(require('../../assets/alarm.mp3'));
+    await soundObject.playAsync();
+  } catch (error) {
+    console.log('Error playing notification sound:', error);
   }
 }
 
@@ -19,24 +22,30 @@ export default function LiveNotificationListener({ profile }) {
     if (!profile || !profile.restaurant_id) return;
 
     // Listen for New Orders
-    const ordersSubscription = supabase
-      .channel('public:orders')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders', filter: `restaurant_id=eq.${profile.restaurant_id}` }, payload => {
-        if (profile.role === 'kitchen' || profile.role === 'waiter' || profile.role === 'owner') {
-          showNotification('New Order Received!', 'beep');
-        }
-      })
-      .subscribe();
+    let ordersSubscription;
+    let callsSubscription;
+    try {
+      ordersSubscription = supabase
+        .channel('public:orders')
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders', filter: `restaurant_id=eq.${profile.restaurant_id}` }, payload => {
+          if (profile.role === 'kitchen' || profile.role === 'waiter' || profile.role === 'owner') {
+            showNotification('New Order Received!', 'beep');
+          }
+        })
+        .subscribe();
 
-    // Listen for Waiter Calls
-    const callsSubscription = supabase
-      .channel('public:customer_requests')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'customer_requests', filter: `restaurant_id=eq.${profile.restaurant_id}` }, payload => {
-        if (profile.role === 'waiter' || profile.role === 'owner') {
-          showNotification(`Table ${payload.new.table_name}: ${payload.new.type === 'request_bill' ? 'Bill Requested' : 'Waiter Called'}`, 'bell');
-        }
-      })
-      .subscribe();
+      // Listen for Waiter Calls
+      callsSubscription = supabase
+        .channel('public:customer_requests')
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'customer_requests', filter: `restaurant_id=eq.${profile.restaurant_id}` }, payload => {
+          if (profile.role === 'waiter' || profile.role === 'owner') {
+            showNotification(`Table ${payload.new.table_name}: ${payload.new.type === 'request_bill' ? 'Bill Requested' : 'Waiter Called'}`, 'bell');
+          }
+        })
+        .subscribe();
+    } catch (e) {
+      console.log('Notification listener setup error:', e);
+    }
 
     return () => {
       if (ordersSubscription) {
@@ -51,33 +60,16 @@ export default function LiveNotificationListener({ profile }) {
   const showNotification = async (message, type) => {
     setNotification(message);
 
-    // Play Sound safely
-    try {
-      const Audio = getAudio();
-      if (Audio?.Sound?.createAsync) {
-        const soundUri = type === 'beep'
-          ? 'https://actions.google.com/sounds/v1/alarms/beep_short.ogg'
-          : 'https://actions.google.com/sounds/v1/alarms/dinner_bell.ogg';
+    playSound(type).catch(() => {});
 
-        const { sound } = await Audio.Sound.createAsync({ uri: soundUri }, { shouldPlay: true });
-        sound.setOnPlaybackStatusUpdate((status) => {
-          if (status.didJustFinish) {
-            sound.unloadAsync();
-          }
-        });
-      }
-    } catch (e) {
-      console.log('Failed to play sound (non-fatal):', e.message);
-    }
-
-    // Show popup
+    // Fade in banner
     Animated.timing(fadeAnim, {
       toValue: 1,
       duration: 300,
       useNativeDriver: true,
     }).start();
 
-    // Hide popup after 4 seconds
+    // Auto-dismiss after 4 seconds
     setTimeout(() => {
       Animated.timing(fadeAnim, {
         toValue: 0,
@@ -90,32 +82,32 @@ export default function LiveNotificationListener({ profile }) {
   if (!notification) return null;
 
   return (
-    <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
+    <Animated.View style={[styles.banner, { opacity: fadeAnim }]}>
       <Text style={styles.text}>{notification}</Text>
     </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  banner: {
     position: 'absolute',
     top: 50,
     left: 20,
     right: 20,
-    backgroundColor: '#3b82f6',
-    padding: 16,
-    borderRadius: 8,
+    backgroundColor: '#0ea5e9',
+    padding: 14,
+    borderRadius: 10,
     zIndex: 9999,
     elevation: 10,
-    shadowColor: '#000',
+    alignItems: 'center',
+    shadowColor: '#0f172a',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
   },
   text: {
-    color: 'white',
-    fontSize: 16,
+    color: '#ffffff',
     fontWeight: 'bold',
-    textAlign: 'center',
-  }
+    fontSize: 14,
+  },
 });

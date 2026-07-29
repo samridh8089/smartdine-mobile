@@ -26,21 +26,29 @@ export default function KitchenTabNavigator() {
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: '#1e293b',
-          borderTopColor: '#334155',
+          backgroundColor: '#ffffff',
+          borderTopColor: '#e2e8f0',
+          height: 60,
+          paddingBottom: 8,
+          paddingTop: 6,
         },
         tabBarActiveTintColor: '#0ea5e9',
-        tabBarInactiveTintColor: '#94a3b8',
+        tabBarInactiveTintColor: '#64748b',
+        tabBarLabelStyle: {
+          fontSize: 13,
+          fontWeight: '600',
+        },
       }}
     >
       <Tab.Screen 
         name="Kitchen" 
         component={KitchenScreen} 
-        options={{ tabBarLabel: 'KDS' }}
+        options={{ tabBarLabel: 'Kitchen Display' }}
       />
       <Tab.Screen 
         name="Settings" 
         component={KitchenSettings} 
+        options={{ tabBarLabel: 'Settings' }}
       />
     </Tab.Navigator>
   );
@@ -49,14 +57,14 @@ export default function KitchenTabNavigator() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0f172a',
+    backgroundColor: '#f8fafc',
     padding: 16,
     justifyContent: 'center',
     alignItems: 'center',
   },
   title: {
     fontSize: 24,
-    color: '#f8fafc',
+    color: '#0f172a',
     marginBottom: 20,
     fontWeight: 'bold',
   },

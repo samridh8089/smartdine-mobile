@@ -24,22 +24,25 @@ export default function DashboardScreen({ route }) {
     fetchMetrics();
 
     // Live subscription for metrics updates
-    const channel = supabase
-      .channel(`dashboard-metrics-${restaurantId}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'orders', filter: `restaurant_id=eq.${restaurantId}` },
-        () => {
-          fetchMetrics();
-        }
-      )
-      .subscribe();
+    let channel;
+    try {
+      channel = supabase
+        .channel(`dashboard-metrics-${restaurantId}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'orders', filter: `restaurant_id=eq.${restaurantId}` },
+          () => {
+            fetchMetrics();
+          }
+        )
+        .subscribe();
+    } catch (e) {
+      console.log('Metrics channel error:', e);
+    }
 
     return () => {
       if (channel) {
-        try {
-          supabase.removeChannel(channel);
-        } catch (_) {}
+        try { supabase.removeChannel(channel); } catch (_) {}
       }
     };
   }, [restaurantId]);
@@ -61,7 +64,6 @@ export default function DashboardScreen({ route }) {
 
   const fetchMetrics = async () => {
     try {
-      // Start of today (00:00:00)
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
@@ -71,17 +73,17 @@ export default function DashboardScreen({ route }) {
         .eq('restaurant_id', restaurantId)
         .gte('created_at', today.toISOString());
 
-      if (!error && orders) {
+      if (!error && Array.isArray(orders)) {
         const totalCount = orders.length;
         const totalRev = orders
-          .filter(o => o.status !== 'cancelled')
-          .reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+          .filter(o => o?.status !== 'cancelled')
+          .reduce((sum, o) => sum + (Number(o?.total) || 0), 0);
         
-        // Count unique active tables
         const activeTablesSet = new Set(
           orders
-            .filter(o => ['new', 'accepted', 'preparing', 'ready', 'served'].includes(o.status))
-            .map(o => o.table_name || o.table_id)
+            .filter(o => ['new', 'accepted', 'preparing', 'ready', 'served'].includes(o?.status))
+            .map(o => o?.table_name || o?.table_id)
+            .filter(Boolean)
         );
 
         setStats({
@@ -106,44 +108,47 @@ export default function DashboardScreen({ route }) {
       {/* Header */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.restaurantTitle}>{restaurantName}</Text>
-          <Text style={styles.subTitle}>Owner Dashboard</Text>
+          <Text style={styles.title}>{restaurantName}</Text>
+          <Text style={styles.subtitle}>Owner & Management Dashboard</Text>
         </View>
-        <TouchableOpacity onPress={handleSignOut} style={styles.signOutBtn}>
+        <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut}>
           <Text style={styles.signOutText}>Sign Out</Text>
         </TouchableOpacity>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
-        {loading ? (
-          <ActivityIndicator size="large" color="#0ea5e9" style={{ marginTop: 40 }} />
-        ) : (
-          <>
-            {/* Stat Cards */}
-            <View style={styles.card}>
-              <Text style={styles.cardLabel}>REVENUE TODAY</Text>
-              <Text style={styles.cardValue}>₹{stats.todayRevenue.toFixed(2)}</Text>
+      {loading ? (
+        <View style={styles.loadingBox}>
+          <ActivityIndicator size="large" color="#0ea5e9" />
+          <Text style={styles.loadingText}>Loading metrics...</Text>
+        </View>
+      ) : (
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          {/* Metrics Grid */}
+          <View style={styles.grid}>
+            <View style={styles.metricCard}>
+              <Text style={styles.metricLabel}>Today's Orders</Text>
+              <Text style={styles.metricValue}>{stats.todayOrders}</Text>
+              <Text style={styles.metricSub}>Total orders placed today</Text>
             </View>
 
-            <View style={styles.card}>
-              <Text style={styles.cardLabel}>TOTAL ORDERS TODAY</Text>
-              <Text style={styles.cardValue}>{stats.todayOrders}</Text>
-            </View>
-
-            <View style={styles.card}>
-              <Text style={styles.cardLabel}>ACTIVE TABLES</Text>
-              <Text style={styles.cardValue}>{stats.activeTables}</Text>
-            </View>
-
-            <View style={styles.infoCard}>
-              <Text style={styles.infoTitle}>⚡ Live Real-Time Dashboard</Text>
-              <Text style={styles.infoDesc}>
-                Any orders placed via QR codes on tables will update these statistics automatically in real-time.
+            <View style={styles.metricCard}>
+              <Text style={styles.metricLabel}>Today's Revenue</Text>
+              <Text style={[styles.metricValue, { color: '#10b981' }]}>
+                ₹{stats.todayRevenue.toFixed(2)}
               </Text>
+              <Text style={styles.metricSub}>Total sales collected today</Text>
             </View>
-          </>
-        )}
-      </ScrollView>
+
+            <View style={styles.metricCard}>
+              <Text style={styles.metricLabel}>Active Tables</Text>
+              <Text style={[styles.metricValue, { color: '#0ea5e9' }]}>
+                {stats.activeTables}
+              </Text>
+              <Text style={styles.metricSub}>Tables currently dining</Text>
+            </View>
+          </View>
+        </ScrollView>
+      )}
     </View>
   );
 }
@@ -151,7 +156,7 @@ export default function DashboardScreen({ route }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0f172a',
+    backgroundColor: '#f8fafc',
     paddingTop: 50,
   },
   header: {
@@ -161,68 +166,73 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#1e293b',
+    borderBottomColor: '#e2e8f0',
+    backgroundColor: '#ffffff',
   },
-  restaurantTitle: {
+  title: {
     fontSize: 22,
     fontWeight: 'bold',
-    color: '#0ea5e9',
+    color: '#0f172a',
   },
-  subTitle: {
-    fontSize: 12,
-    color: '#94a3b8',
+  subtitle: {
+    fontSize: 13,
+    color: '#64748b',
+    marginTop: 2,
   },
   signOutBtn: {
-    backgroundColor: '#334155',
-    paddingHorizontal: 12,
+    backgroundColor: '#f1f5f9',
+    paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
   },
   signOutText: {
     color: '#ef4444',
     fontWeight: 'bold',
-    fontSize: 14,
+    fontSize: 13,
   },
-  content: {
-    padding: 16,
+  loadingBox: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  card: {
-    backgroundColor: '#1e293b',
+  loadingText: {
+    color: '#64748b',
+    marginTop: 12,
+  },
+  scrollContent: {
     padding: 20,
-    borderRadius: 12,
-    marginBottom: 16,
+  },
+  grid: {
+    gap: 16,
+  },
+  metricCard: {
+    backgroundColor: '#ffffff',
+    padding: 20,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#e2e8f0',
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 2,
   },
-  cardLabel: {
-    fontSize: 12,
-    fontWeight: 'bold',
-    color: '#94a3b8',
-    marginBottom: 6,
-    letterSpacing: 1,
-  },
-  cardValue: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#f8fafc',
-  },
-  infoCard: {
-    backgroundColor: '#0369a122',
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#0284c744',
-    marginTop: 8,
-  },
-  infoTitle: {
-    color: '#38bdf8',
-    fontWeight: 'bold',
+  metricLabel: {
     fontSize: 14,
+    fontWeight: '600',
+    color: '#64748b',
+    marginBottom: 6,
+  },
+  metricValue: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    color: '#0f172a',
     marginBottom: 4,
   },
-  infoDesc: {
+  metricSub: {
+    fontSize: 12,
     color: '#94a3b8',
-    fontSize: 13,
-    lineHeight: 18,
   },
 });
