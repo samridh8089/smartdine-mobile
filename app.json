@@ -1,13 +1,12 @@
 {
   "expo": {
     "name": "smartdine-mobile",
-    "owner": "ad-city",
+    "owner": "sam33.dh",
     "slug": "smartdine-mobile-app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": false,
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
@@ -20,7 +19,6 @@
     },
     "android": {
       "package": "com.smartdine.mobile",
-      "newArchEnabled": false,
       "permissions": [
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE",
@@ -51,8 +49,14 @@
     },
     "extra": {
       "eas": {
-        "projectId": "2fb0358d-6e46-4269-996d-0614a98052e1"
+        "projectId": "407eef68-5b75-4b63-b679-8123df863ea7"
       }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/407eef68-5b75-4b63-b679-8123df863ea7"
     }
   }
 }
