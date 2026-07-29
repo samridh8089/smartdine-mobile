@@ -284,6 +284,16 @@ export default function OrdersScreen({ route }) {
       });
 
       if (hasServedItems) {
+        const servedTotal = items.reduce((sum, item) => {
+          const itemTime = item?.created_at ? new Date(item.created_at).getTime() : 0;
+          const isOlderBatch = (latestTime > 0 && itemTime > 0 && (latestTime - itemTime > 3000));
+          const isServed = Boolean(item?.is_served || item?.is_prepared || item?.status === 'served' || item?.status === 'ready' || isOlderBatch);
+          if (isServed && !item?.is_cancelled && item?.status !== 'cancelled') {
+            return sum + ((Number(item.price) || 0) * (Number(item.quantity) || 1));
+          }
+          return sum;
+        }, 0);
+
         try {
           await supabase
             .from('order_items')
@@ -296,6 +306,8 @@ export default function OrdersScreen({ route }) {
           .from('orders')
           .update({
             status: 'served',
+            subtotal: servedTotal,
+            total: servedTotal,
             cancelled_by: cancellerName,
             cancellation_reason: reasonText,
             updated_at: new Date().toISOString(),
