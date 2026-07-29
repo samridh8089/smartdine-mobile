@@ -5,15 +5,16 @@ import { sendSystemAlert, registerPushToken } from '../lib/notifications';
 import { getFormattedOrderId } from '../lib/orderUtils';
 import { startAlarm, stopAlarm, isAlarmActive } from '../lib/alarmManager';
 
-// Helper to consolidate items into NEW items to prepare vs PREVIOUSLY SERVED items
+// Helper to consolidate items into NEW items to prepare vs PREVIOUSLY SERVED vs CANCELLED items
 function consolidateItems(itemList = [], orderStatus = '') {
   try {
     if (!Array.isArray(itemList) || itemList.length === 0) {
-      return { newItems: [], servedItems: [] };
+      return { newItems: [], servedItems: [], cancelledItems: [] };
     }
 
     const newMap = new Map();
     const servedMap = new Map();
+    const cancelledMap = new Map();
 
     let latestTime = 0;
     itemList.forEach(item => {
@@ -28,6 +29,17 @@ function consolidateItems(itemList = [], orderStatus = '') {
       const name = String(item.menu_item_name || item.name || 'Item');
       const qty = Number(item.quantity) || 1;
       const price = Number(item.price) || 0;
+
+      const isItemCancelled = Boolean(item.is_cancelled || item.status === 'cancelled');
+
+      if (isItemCancelled) {
+        if (cancelledMap.has(name)) {
+          cancelledMap.get(name).quantity += qty;
+        } else {
+          cancelledMap.set(name, { name, quantity: qty, price, isCancelled: true });
+        }
+        return;
+      }
 
       const itemTime = item.created_at ? new Date(item.created_at).getTime() : 0;
       const isOlderBatch = (latestTime > 0 && itemTime > 0 && (latestTime - itemTime > 3000));
@@ -51,16 +63,18 @@ function consolidateItems(itemList = [], orderStatus = '') {
     return {
       newItems: Array.from(newMap.values()),
       servedItems: Array.from(servedMap.values()),
+      cancelledItems: Array.from(cancelledMap.values()),
     };
   } catch (e) {
     console.log('Error consolidating items:', e);
-    return { newItems: [], servedItems: [] };
+    return { newItems: [], servedItems: [], cancelledItems: [] };
   }
 }
 
-// Calculate grand total excluding cancelled orders / items
-function getCalculatedOrderTotal(order, newItems = [], servedItems = []) {
-  if (!order || order.status === 'cancelled') return 0;
+// Calculate grand total: SUM ONLY SERVED + ACTIVE UNLESS ORDER ITSELF IS FULLY CANCELLED WITH 0 SERVED
+function getCalculatedOrderTotal(order, newItems = [], servedItems = [], cancelledItems = []) {
+  if (!order) return 0;
+  if (order.status === 'cancelled' && servedItems.length === 0) return 0;
 
   let total = 0;
 
@@ -69,14 +83,15 @@ function getCalculatedOrderTotal(order, newItems = [], servedItems = []) {
     total += (Number(item.price) || 0) * (Number(item.quantity) || 1);
   });
 
-  // Only sum new items if order is not cancelled
-  if (!['cancelled', 'rejected'].includes(order.status)) {
+  // Only sum new items if order is not fully cancelled
+  if (order.status !== 'cancelled') {
     newItems.forEach(item => {
       total += (Number(item.price) || 0) * (Number(item.quantity) || 1);
     });
   }
 
-  // Fallback to order.total if calculated total is 0
+  // Cancelled items are ALWAYS 0 towards the bill!
+
   return total > 0 ? total : Number(order.total || 0);
 }
 
@@ -249,25 +264,60 @@ export default function OrdersScreen({ route }) {
 
     try {
       const cancellerName = profile?.full_name || profile?.role || 'Staff';
-      const { error } = await supabase
-        .from('orders')
-        .update({
-          status: 'cancelled',
-          cancelled_by: cancellerName,
-          cancellation_reason: cancellationReason || 'Cancelled by staff',
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', cancellingOrderId);
+      const reasonText = cancellationReason || 'Cancelled by staff';
 
-      if (!error) {
-        stopAlarm().catch(() => {});
-        setCancelModalVisible(false);
-        setCancellingOrderId(null);
-        setCancellationReason('');
-        fetchOrders();
+      const targetOrder = (orders || []).find(o => o.id === cancellingOrderId);
+      const items = targetOrder?.order_items || [];
+
+      let latestTime = 0;
+      items.forEach(item => {
+        if (item?.created_at) {
+          const t = new Date(item.created_at).getTime();
+          if (!isNaN(t) && t > latestTime) latestTime = t;
+        }
+      });
+
+      const hasServedItems = items.some(item => {
+        const itemTime = item?.created_at ? new Date(item.created_at).getTime() : 0;
+        const isOlderBatch = (latestTime > 0 && itemTime > 0 && (latestTime - itemTime > 3000));
+        return Boolean(item?.is_served || item?.is_prepared || item?.status === 'served' || item?.status === 'ready' || isOlderBatch);
+      });
+
+      if (hasServedItems) {
+        try {
+          await supabase
+            .from('order_items')
+            .update({ is_cancelled: true, status: 'cancelled' })
+            .eq('order_id', cancellingOrderId)
+            .eq('is_served', false);
+        } catch (_) {}
+
+        await supabase
+          .from('orders')
+          .update({
+            status: 'served',
+            cancelled_by: cancellerName,
+            cancellation_reason: reasonText,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', cancellingOrderId);
       } else {
-        Alert.alert('Error', error.message);
+        await supabase
+          .from('orders')
+          .update({
+            status: 'cancelled',
+            cancelled_by: cancellerName,
+            cancellation_reason: reasonText,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', cancellingOrderId);
       }
+
+      stopAlarm().catch(() => {});
+      setCancelModalVisible(false);
+      setCancellingOrderId(null);
+      setCancellationReason('');
+      fetchOrders();
     } catch (e) {
       Alert.alert('Error', 'Failed to cancel order');
     }
@@ -362,17 +412,21 @@ export default function OrdersScreen({ route }) {
 
               let newItems = [];
               let servedItems = [];
+              let cancelledItems = [];
               let newCount = 0;
               let servedCount = 0;
+              let cancelledCount = 0;
               let grandTotal = 0;
 
               try {
                 const res = consolidateItems(order.order_items || [], order.status);
                 newItems = res.newItems || [];
                 servedItems = res.servedItems || [];
+                cancelledItems = res.cancelledItems || [];
                 newCount = newItems.reduce((s, i) => s + i.quantity, 0);
                 servedCount = servedItems.reduce((s, i) => s + i.quantity, 0);
-                grandTotal = getCalculatedOrderTotal(order, newItems, servedItems);
+                cancelledCount = cancelledItems.reduce((s, i) => s + i.quantity, 0);
+                grandTotal = getCalculatedOrderTotal(order, newItems, servedItems, cancelledItems);
               } catch (_) {}
 
               return (
@@ -398,9 +452,11 @@ export default function OrdersScreen({ route }) {
                   </Text>
 
                   {/* Cancellation Details Banner */}
-                  {order.status === 'cancelled' && (
+                  {(order.status === 'cancelled' || order.cancellation_reason) && (
                     <View style={styles.cancelledBanner}>
-                      <Text style={styles.cancelledTitle}>Order Cancelled</Text>
+                      <Text style={styles.cancelledTitle}>
+                        {order.status === 'cancelled' ? 'Order Cancelled' : 'Reorder Batch Cancelled'}
+                      </Text>
                       {order.cancelled_by ? <Text style={styles.cancelledSub}>• Cancelled By: {order.cancelled_by}</Text> : null}
                       {order.cancellation_reason ? <Text style={styles.cancelledSub}>• Reason: "{order.cancellation_reason}"</Text> : null}
                     </View>
@@ -423,7 +479,7 @@ export default function OrdersScreen({ route }) {
                   <View style={styles.itemsBox}>
                     {/* 1. TOP SECTION: NEW ITEMS TO PREPARE */}
                     {newItems.length > 0 ? (
-                      <View style={{ marginBottom: servedItems.length > 0 ? 10 : 0 }}>
+                      <View style={{ marginBottom: (servedItems.length > 0 || cancelledItems.length > 0) ? 10 : 0 }}>
                         <View style={styles.newHeaderRow}>
                           <Text style={styles.itemsHeaderTitle}>ITEMS TO PREPARE ({newCount}):</Text>
                           <View style={styles.newTagBadge}>
@@ -440,10 +496,12 @@ export default function OrdersScreen({ route }) {
                         ))}
                       </View>
                     ) : (
-                      <Text style={styles.itemsHeaderTitle}>ALL ITEMS PREPARED ({servedCount}):</Text>
+                      <Text style={styles.itemsHeaderTitle}>
+                        {servedCount > 0 ? `ALL ACTIVE ITEMS PREPARED (${servedCount}):` : `ITEMS (${newCount + servedCount}):`}
+                      </Text>
                     )}
 
-                    {/* 2. BOTTOM SECTION: PREVIOUSLY SERVED ITEMS */}
+                    {/* 2. MIDDLE SECTION: PREVIOUSLY SERVED ITEMS */}
                     {servedItems.length > 0 && (
                       <View style={styles.servedSection}>
                         <Text style={styles.servedHeaderTitle}>PREVIOUSLY SERVED ({servedCount}):</Text>
@@ -455,6 +513,23 @@ export default function OrdersScreen({ route }) {
                               <Text style={styles.servedCheckText}>✓ Served</Text>
                             </View>
                             <Text style={styles.itemPriceServed}>₹{(item.price * item.quantity).toFixed(2)}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    )}
+
+                    {/* 3. BOTTOM SECTION: CANCELLED ITEMS */}
+                    {cancelledItems.length > 0 && (
+                      <View style={styles.cancelledSection}>
+                        <Text style={styles.cancelledHeaderTitle}>CANCELLED BY KITCHEN ({cancelledCount}):</Text>
+                        {cancelledItems.map((item, i) => (
+                          <View key={`can_${i}`} style={styles.itemRowCancelled}>
+                            <Text style={styles.itemQtyCancelled}>{item.quantity}x</Text>
+                            <Text style={styles.itemNameCancelled}>{item.name}</Text>
+                            <View style={styles.cancelledTagBadge}>
+                              <Text style={styles.cancelledTagText}>Cancelled</Text>
+                            </View>
+                            <Text style={styles.itemPriceCancelled}>₹0.00</Text>
                           </View>
                         ))}
                       </View>
@@ -670,6 +745,14 @@ const styles = StyleSheet.create({
   servedCheckBadge: { backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#cbd5e1', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginRight: 8 },
   servedCheckText: { color: '#64748b', fontSize: 10, fontWeight: 'bold' },
   itemPriceServed: { color: '#64748b' },
+  cancelledSection: { borderTopWidth: 1, borderTopColor: '#fca5a5', paddingTop: 8, marginTop: 6 },
+  cancelledHeaderTitle: { color: '#ef4444', fontSize: 11, fontWeight: 'bold', marginBottom: 4 },
+  itemRowCancelled: { flexDirection: 'row', alignItems: 'center', marginVertical: 2 },
+  itemQtyCancelled: { color: '#ef4444', fontWeight: 'bold', width: 32, textDecorationLine: 'line-through' },
+  itemNameCancelled: { color: '#ef4444', flex: 1, textDecorationLine: 'line-through' },
+  cancelledTagBadge: { backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fca5a5', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginRight: 8 },
+  cancelledTagText: { color: '#ef4444', fontSize: 10, fontWeight: 'bold' },
+  itemPriceCancelled: { color: '#94a3b8', textDecorationLine: 'line-through' },
   divider: { height: 1, backgroundColor: '#e2e8f0', marginVertical: 6 },
   summaryRow: { flexDirection: 'row', justifyContent: 'space-between', marginVertical: 2 },
   summaryLabel: { color: '#64748b', fontSize: 12 },

@@ -7,15 +7,16 @@ import { sendSystemAlert, registerPushToken } from '../lib/notifications';
 import { getFormattedOrderId } from '../lib/orderUtils';
 import { startAlarm, stopAlarm, isAlarmActive } from '../lib/alarmManager';
 
-// Helper to consolidate items into NEW items to prepare vs PREVIOUSLY SERVED items
+// Helper to consolidate items into NEW items to prepare vs PREVIOUSLY SERVED vs CANCELLED items
 function consolidateItems(itemList = [], orderStatus = '') {
   try {
     if (!Array.isArray(itemList) || itemList.length === 0) {
-      return { newItems: [], servedItems: [] };
+      return { newItems: [], servedItems: [], cancelledItems: [] };
     }
 
     const newMap = new Map();
     const servedMap = new Map();
+    const cancelledMap = new Map();
 
     // 1. Find latest item creation timestamp to identify re-ordered batches
     let latestTime = 0;
@@ -26,12 +27,23 @@ function consolidateItems(itemList = [], orderStatus = '') {
       }
     });
 
-    // 2. Classify items: items from an earlier batch (3+ seconds prior) are PREVIOUSLY SERVED!
+    // 2. Classify items
     itemList.forEach(item => {
       if (!item) return;
       const name = String(item.menu_item_name || item.name || 'Item');
       const qty = Number(item.quantity) || 1;
       const price = Number(item.price) || 0;
+
+      const isItemCancelled = Boolean(item.is_cancelled || item.status === 'cancelled');
+
+      if (isItemCancelled) {
+        if (cancelledMap.has(name)) {
+          cancelledMap.get(name).quantity += qty;
+        } else {
+          cancelledMap.set(name, { name, quantity: qty, price, isCancelled: true });
+        }
+        return;
+      }
 
       const itemTime = item.created_at ? new Date(item.created_at).getTime() : 0;
       const isOlderBatch = (latestTime > 0 && itemTime > 0 && (latestTime - itemTime > 3000));
@@ -55,10 +67,11 @@ function consolidateItems(itemList = [], orderStatus = '') {
     return {
       newItems: Array.from(newMap.values()),
       servedItems: Array.from(servedMap.values()),
+      cancelledItems: Array.from(cancelledMap.values()),
     };
   } catch (e) {
     console.log('Error consolidating items:', e);
-    return { newItems: [], servedItems: [] };
+    return { newItems: [], servedItems: [], cancelledItems: [] };
   }
 }
 
@@ -259,25 +272,62 @@ export default function KitchenScreen({ route }) {
 
     try {
       const cancellerName = profile?.full_name || 'Kitchen Staff';
-      const { error } = await supabase
-        .from('orders')
-        .update({
-          status: 'cancelled',
-          cancelled_by: cancellerName,
-          cancellation_reason: cancellationReason || 'Cancelled by kitchen staff',
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', cancellingOrderId);
+      const reasonText = cancellationReason || 'Kitchen Closed';
 
-      if (!error) {
-        stopAlarm().catch(() => {});
-        setCancelModalVisible(false);
-        setCancellingOrderId(null);
-        setCancellationReason('');
-        fetchOrders();
+      const targetOrder = (orders || []).find(o => o.id === cancellingOrderId);
+      const items = targetOrder?.order_items || [];
+
+      let latestTime = 0;
+      items.forEach(item => {
+        if (item?.created_at) {
+          const t = new Date(item.created_at).getTime();
+          if (!isNaN(t) && t > latestTime) latestTime = t;
+        }
+      });
+
+      const hasServedItems = items.some(item => {
+        const itemTime = item?.created_at ? new Date(item.created_at).getTime() : 0;
+        const isOlderBatch = (latestTime > 0 && itemTime > 0 && (latestTime - itemTime > 3000));
+        return Boolean(item?.is_served || item?.is_prepared || item?.status === 'served' || item?.status === 'ready' || isOlderBatch);
+      });
+
+      if (hasServedItems) {
+        // Order HAS served items! Do not cancel the whole order. Keep status as 'served'!
+        try {
+          await supabase
+            .from('order_items')
+            .update({ is_cancelled: true, status: 'cancelled' })
+            .eq('order_id', cancellingOrderId)
+            .eq('is_served', false);
+        } catch (_) {}
+
+        await supabase
+          .from('orders')
+          .update({
+            status: 'served',
+            cancelled_by: cancellerName,
+            cancellation_reason: reasonText,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', cancellingOrderId);
       } else {
-        Alert.alert('Error', error.message);
+        // Entire order cancelled from start
+        await supabase
+          .from('orders')
+          .update({
+            status: 'cancelled',
+            cancelled_by: cancellerName,
+            cancellation_reason: reasonText,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', cancellingOrderId);
       }
+
+      stopAlarm().catch(() => {});
+      setCancelModalVisible(false);
+      setCancellingOrderId(null);
+      setCancellationReason('');
+      fetchOrders();
     } catch (e) {
       Alert.alert('Error', 'Failed to cancel order');
     }
@@ -366,15 +416,19 @@ export default function KitchenScreen({ route }) {
               
               let newItems = [];
               let servedItems = [];
+              let cancelledItems = [];
               let newCount = 0;
               let servedCount = 0;
+              let cancelledCount = 0;
 
               try {
                 const res = consolidateItems(order.order_items || [], order.status);
                 newItems = res.newItems || [];
                 servedItems = res.servedItems || [];
+                cancelledItems = res.cancelledItems || [];
                 newCount = newItems.reduce((s, i) => s + i.quantity, 0);
                 servedCount = servedItems.reduce((s, i) => s + i.quantity, 0);
+                cancelledCount = cancelledItems.reduce((s, i) => s + i.quantity, 0);
               } catch (_) {}
 
               return (
@@ -400,9 +454,11 @@ export default function KitchenScreen({ route }) {
                   </Text>
 
                   {/* Cancellation Banner */}
-                  {order.status === 'cancelled' && (
+                  {(order.status === 'cancelled' || order.cancellation_reason) && (
                     <View style={styles.cancelledBanner}>
-                      <Text style={styles.cancelledTitle}>Order Cancelled</Text>
+                      <Text style={styles.cancelledTitle}>
+                        {order.status === 'cancelled' ? 'Order Cancelled' : 'Reorder Batch Cancelled'}
+                      </Text>
                       {order.cancelled_by ? <Text style={styles.cancelledSub}>• Cancelled By: {order.cancelled_by}</Text> : null}
                       {order.cancellation_reason ? <Text style={styles.cancelledSub}>• Reason: "{order.cancellation_reason}"</Text> : null}
                     </View>
@@ -412,7 +468,7 @@ export default function KitchenScreen({ route }) {
                   <View style={styles.itemsBox}>
                     {/* 1. TOP SECTION: NEW ITEMS TO PREPARE */}
                     {newItems.length > 0 ? (
-                      <View style={{ marginBottom: servedItems.length > 0 ? 10 : 0 }}>
+                      <View style={{ marginBottom: (servedItems.length > 0 || cancelledItems.length > 0) ? 10 : 0 }}>
                         <View style={styles.newHeaderRow}>
                           <Text style={styles.itemsHeaderTitle}>ITEMS TO PREPARE ({newCount}):</Text>
                           <View style={styles.newTagBadge}>
@@ -428,10 +484,12 @@ export default function KitchenScreen({ route }) {
                         ))}
                       </View>
                     ) : (
-                      <Text style={styles.itemsHeaderTitle}>ALL ITEMS PREPARED ({servedCount}):</Text>
+                      <Text style={styles.itemsHeaderTitle}>
+                        {servedCount > 0 ? `ALL ACTIVE ITEMS PREPARED (${servedCount}):` : `ITEMS (${newCount + servedCount}):`}
+                      </Text>
                     )}
 
-                    {/* 2. BOTTOM SECTION: PREVIOUSLY SERVED ITEMS */}
+                    {/* 2. MIDDLE SECTION: PREVIOUSLY SERVED ITEMS */}
                     {servedItems.length > 0 && (
                       <View style={styles.servedSection}>
                         <Text style={styles.servedHeaderTitle}>PREVIOUSLY SERVED ({servedCount}):</Text>
@@ -441,6 +499,22 @@ export default function KitchenScreen({ route }) {
                             <Text style={styles.itemNameServed}>{item.name}</Text>
                             <View style={styles.servedCheckBadge}>
                               <Text style={styles.servedCheckText}>✓ Served</Text>
+                            </View>
+                          </View>
+                        ))}
+                      </View>
+                    )}
+
+                    {/* 3. BOTTOM SECTION: CANCELLED ITEMS */}
+                    {cancelledItems.length > 0 && (
+                      <View style={styles.cancelledSection}>
+                        <Text style={styles.cancelledHeaderTitle}>CANCELLED BY KITCHEN ({cancelledCount}):</Text>
+                        {cancelledItems.map((item, i) => (
+                          <View key={`can_${i}`} style={styles.itemRowCancelled}>
+                            <Text style={styles.itemQtyCancelled}>{item.quantity}x</Text>
+                            <Text style={styles.itemNameCancelled}>{item.name}</Text>
+                            <View style={styles.cancelledTagBadge}>
+                              <Text style={styles.cancelledTagText}>Cancelled</Text>
                             </View>
                           </View>
                         ))}
@@ -637,6 +711,13 @@ const styles = StyleSheet.create({
   itemNameServed: { color: '#64748b', fontSize: 14, flex: 1 },
   servedCheckBadge: { backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#cbd5e1', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginLeft: 6 },
   servedCheckText: { color: '#64748b', fontSize: 10, fontWeight: 'bold' },
+  cancelledSection: { borderTopWidth: 1, borderTopColor: '#fca5a5', paddingTop: 8, marginTop: 6 },
+  cancelledHeaderTitle: { color: '#ef4444', fontSize: 11, fontWeight: 'bold', marginBottom: 4 },
+  itemRowCancelled: { flexDirection: 'row', alignItems: 'center', marginVertical: 3 },
+  itemQtyCancelled: { color: '#ef4444', fontWeight: 'bold', fontSize: 14, width: 36, textDecorationLine: 'line-through' },
+  itemNameCancelled: { color: '#ef4444', fontSize: 14, flex: 1, textDecorationLine: 'line-through' },
+  cancelledTagBadge: { backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fca5a5', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginLeft: 6 },
+  cancelledTagText: { color: '#ef4444', fontSize: 10, fontWeight: 'bold' },
   actions: { flexDirection: 'row', gap: 8, marginTop: 12 },
   actionBtn: { flex: 1, padding: 10, borderRadius: 8, alignItems: 'center' },
   actionBtnText: { color: 'white', fontWeight: 'bold', fontSize: 13 },
