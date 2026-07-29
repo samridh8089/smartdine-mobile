@@ -29,12 +29,14 @@ export default function WaiterTabNavigator({ route }) {
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
+        tabBarIcon: () => null,
+        tabBarIconStyle: { display: 'none' },
         tabBarStyle: {
           backgroundColor: '#ffffff',
           borderTopColor: '#e2e8f0',
-          height: 60,
-          paddingBottom: 8,
-          paddingTop: 6,
+          height: 56,
+          paddingBottom: 16,
+          paddingTop: 12,
         },
         tabBarActiveTintColor: '#0ea5e9',
         tabBarInactiveTintColor: '#64748b',
