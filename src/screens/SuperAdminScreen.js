@@ -332,7 +332,7 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 22,
     fontWeight: 'bold',
-    color: '#0ea5e9',
+    color: '#059669',
   },
   subtitle: {
     fontSize: 12,
@@ -376,7 +376,7 @@ const styles = StyleSheet.create({
     color: '#10b981',
   },
   addButton: {
-    backgroundColor: '#0ea5e9',
+    backgroundColor: '#059669',
     padding: 14,
     borderRadius: 10,
     alignItems: 'center',
@@ -526,8 +526,8 @@ const styles = StyleSheet.create({
     borderColor: '#cbd5e1',
   },
   planOptionActive: {
-    backgroundColor: '#0ea5e9',
-    borderColor: '#0ea5e9',
+    backgroundColor: '#059669',
+    borderColor: '#059669',
   },
   planOptionText: {
     color: '#64748b',
@@ -555,7 +555,7 @@ const styles = StyleSheet.create({
   },
   saveBtn: {
     flex: 1,
-    backgroundColor: '#0ea5e9',
+    backgroundColor: '#059669',
     padding: 12,
     borderRadius: 8,
     alignItems: 'center',

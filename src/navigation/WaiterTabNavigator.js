@@ -38,7 +38,7 @@ export default function WaiterTabNavigator({ route }) {
           paddingBottom: 16,
           paddingTop: 12,
         },
-        tabBarActiveTintColor: '#0ea5e9',
+        tabBarActiveTintColor: '#059669',
         tabBarInactiveTintColor: '#64748b',
         tabBarLabelStyle: {
           fontSize: 12,

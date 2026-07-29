@@ -262,7 +262,7 @@ const styles = StyleSheet.create({
   stopAlarmText: { color: 'white', fontWeight: 'bold', fontSize: 12 },
   tabsContainer: { flexDirection: 'row', backgroundColor: '#e2e8f0', margin: 12, borderRadius: 8, padding: 4 },
   tab: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 6 },
-  activeTab: { backgroundColor: '#0ea5e9' },
+  activeTab: { backgroundColor: '#059669' },
   tabText: { color: '#64748b', fontWeight: 'bold', fontSize: 12 },
   activeTabText: { color: 'white' },
   loadingBox: { flex: 1, justifyContent: 'center', alignItems: 'center' },

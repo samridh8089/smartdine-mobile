@@ -48,7 +48,7 @@ export default function MainTabNavigator({ route }) {
           paddingBottom: 16,
           paddingTop: 12,
         },
-        tabBarActiveTintColor: '#0ea5e9',
+        tabBarActiveTintColor: '#059669',
         tabBarInactiveTintColor: '#64748b',
         tabBarLabelStyle: {
           fontSize: 13,
@@ -120,7 +120,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   roleBadge: {
-    backgroundColor: '#0ea5e9',
+    backgroundColor: '#059669',
     paddingHorizontal: 12,
     paddingVertical: 4,
     borderRadius: 12,
