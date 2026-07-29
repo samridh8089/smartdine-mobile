@@ -9,7 +9,7 @@ import { startAlarm, stopAlarm } from '../lib/alarmManager';
 import { checkAndPromptBatteryOptimization, openBatteryOptimizationSettings } from '../lib/batteryManager';
 
 export default function WaiterOrdersScreen({ route }) {
-  const profile = route.params?.profile || {};
+  const profile = route?.params?.profile || {};
   const restaurantId = profile.restaurant_id || null;
 
   const [orders, setOrders] = useState([]);

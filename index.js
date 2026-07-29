@@ -1,8 +1,102 @@
 import { registerRootComponent } from 'expo';
-
+import React from 'react';
+import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import App from './App';
 
-// registerRootComponent calls AppRegistry.registerComponent('main', () => App);
-// It also ensures that whether you load the app in Expo Go or in a native build,
-// the environment is set up appropriately
-registerRootComponent(App);
+// Global Uncaught Exception Handler
+if (global.ErrorUtils) {
+  try {
+    const originalHandler = global.ErrorUtils.getGlobalHandler();
+    global.ErrorUtils.setGlobalHandler((error, isFatal) => {
+      console.log('CRITICAL GLOBAL JS ERROR:', error);
+      if (originalHandler) {
+        try {
+          originalHandler(error, isFatal);
+        } catch (_) {}
+      }
+    });
+  } catch (e) {
+    console.log('Failed to attach ErrorUtils handler:', e);
+  }
+}
+
+class RootErrorBoundary extends React.Component {
+  state = { hasError: false, error: null };
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.log('ROOT ERROR BOUNDARY CAUGHT:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      const errStr = String(this.state.error || 'Unknown Error');
+      const stack = this.state.error?.stack || '';
+      return (
+        <View style={styles.container}>
+          <ScrollView contentContainerStyle={styles.content}>
+            <Text style={styles.title}>🚨 App Launch Error</Text>
+            <Text style={styles.label}>Error Details:</Text>
+            <Text style={styles.code}>{errStr}</Text>
+            <Text style={styles.label}>Stack Trace:</Text>
+            <Text style={styles.stack}>{stack}</Text>
+          </ScrollView>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function Root() {
+  return (
+    <RootErrorBoundary>
+      <App />
+    </RootErrorBoundary>
+  );
+}
+
+registerRootComponent(Root);
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#0f172a',
+  },
+  content: {
+    padding: 24,
+    paddingTop: 60,
+  },
+  title: {
+    color: '#ef4444',
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 16,
+  },
+  label: {
+    color: '#fbbf24',
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginTop: 12,
+    marginBottom: 6,
+  },
+  code: {
+    color: '#f8fafc',
+    fontSize: 13,
+    fontFamily: 'monospace',
+    backgroundColor: '#1e293b',
+    padding: 12,
+    borderRadius: 8,
+  },
+  stack: {
+    color: '#94a3b8',
+    fontSize: 11,
+    fontFamily: 'monospace',
+    backgroundColor: '#1e293b',
+    padding: 12,
+    borderRadius: 8,
+  },
+});

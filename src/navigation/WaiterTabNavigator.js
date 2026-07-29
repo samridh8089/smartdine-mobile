@@ -23,7 +23,7 @@ function WaiterSettings() {
 }
 
 export default function WaiterTabNavigator({ route }) {
-  const profile = route.params?.profile;
+  const profile = route?.params?.profile || {};
 
   return (
     <Tab.Navigator

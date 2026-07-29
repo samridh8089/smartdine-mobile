@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase';
 import { sendSystemAlert } from '../lib/notifications';
 
 export default function WaiterCallsScreen({ route }) {
-  const profile = route.params?.profile || {};
+  const profile = route?.params?.profile || {};
   const restaurantId = profile.restaurant_id || null;
 
   const [calls, setCalls] = useState([]);

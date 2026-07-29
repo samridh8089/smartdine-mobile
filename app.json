@@ -40,7 +40,7 @@
         {
           "icon": "./assets/icon.png",
           "color": "#0ea5e9",
-          "sounds": []
+          "sounds": ["./assets/alarm.mp3"]
         }
       ],
       "expo-av"

@@ -7,7 +7,7 @@ import { supabase } from '../lib/supabase';
 import { sendPushToRestaurantStaff } from '../lib/notifications';
 
 export default function WaiterPunchScreen({ route }) {
-  const profile = route.params?.profile || {};
+  const profile = route?.params?.profile || {};
   const [restaurantId, setRestaurantId] = useState(profile.restaurant_id || null);
   const [restaurant, setRestaurant] = useState(null);
 
