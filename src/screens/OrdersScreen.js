@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIn
 import { supabase } from '../lib/supabase';
 import { sendSystemAlert, registerPushToken } from '../lib/notifications';
 import { getFormattedOrderId } from '../lib/orderUtils';
-import { startAlarm, stopAlarm } from '../lib/alarmManager';
+import { startAlarm, stopAlarm, isAlarmActive } from '../lib/alarmManager';
 
 export default function OrdersScreen({ route }) {
   const profile = route?.params?.profile || {};
