@@ -3,7 +3,7 @@
  *
  * Prompts staff (Owner, Kitchen, Waiter) to disable Battery Optimization
  * so background notifications & alarm audio work reliably.
- * All calls are safe — app never crashes even if intent fails.
+ * Safe fallback using React Native Linking.
  */
 
 import { Alert, Platform, Linking } from 'react-native';
@@ -53,48 +53,14 @@ export async function checkAndPromptBatteryOptimization(forcePrompt = false) {
 }
 
 /**
- * Opens Android Battery Optimization Settings screen.
- * Uses Linking (no native modules needed) — safe fallback.
+ * Opens Android Battery Optimization Settings screen directly via Linking.
  */
 export async function openBatteryOptimizationSettings() {
   if (Platform.OS !== 'android') return;
 
   try {
-    // Try expo-intent-launcher if available
-    let IntentLauncher = null;
-    try {
-      IntentLauncher = require('expo-intent-launcher');
-    } catch (_) {
-      IntentLauncher = null;
-    }
-
-    if (IntentLauncher?.startActivityAsync && IntentLauncher?.ActivityAction) {
-      try {
-        await IntentLauncher.startActivityAsync(
-          IntentLauncher.ActivityAction.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-          { data: 'package:com.smartdine.mobile' }
-        );
-        return;
-      } catch (e1) {
-        console.log('[BatteryManager] Direct battery intent failed, trying fallback...');
-      }
-
-      try {
-        await IntentLauncher.startActivityAsync(
-          IntentLauncher.ActivityAction.IGNORE_BATTERY_OPTIMIZATION_SETTINGS
-        );
-        return;
-      } catch (e2) {
-        console.log('[BatteryManager] Battery settings intent failed, using Linking...');
-      }
-    }
-
-    // Safe fallback: open app settings via Linking (always works)
     await Linking.openSettings();
   } catch (e) {
     console.log('[BatteryManager] openSettings error (non-fatal):', e.message);
-    try {
-      await Linking.openSettings();
-    } catch (_) {}
   }
 }
