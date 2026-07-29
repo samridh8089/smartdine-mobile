@@ -7,6 +7,7 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
+    "newArchEnabled": false,
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
@@ -19,6 +20,7 @@
     },
     "android": {
       "package": "com.smartdine.mobile",
+      "newArchEnabled": false,
       "permissions": [
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE",
@@ -39,8 +41,7 @@
         "expo-notifications",
         {
           "icon": "./assets/icon.png",
-          "color": "#0ea5e9",
-          "sounds": ["./assets/alarm.mp3"]
+          "color": "#0ea5e9"
         }
       ],
       "expo-av"

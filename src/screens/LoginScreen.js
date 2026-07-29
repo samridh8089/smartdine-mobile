@@ -10,28 +10,34 @@ export default function LoginScreen({ navigation }) {
   const [checkingSession, setCheckingSession] = useState(true);
 
   const navigateByRole = (profile) => {
-    if (profile?.id) {
-      registerPushToken(profile.id);
-    }
-    if (!profile || !profile.role) {
-      navigation.replace('MainApp');
-      return;
-    }
-    switch (profile.role) {
-      case 'super_admin':
-        navigation.replace('SuperAdmin', { profile });
-        break;
-      case 'kitchen':
-        navigation.replace('KitchenApp', { profile });
-        break;
-      case 'waiter':
-        navigation.replace('WaiterApp', { profile });
-        break;
-      case 'owner':
-      case 'manager':
-      default:
-        navigation.replace('MainApp', { profile });
-        break;
+    try {
+      if (profile?.id) {
+        registerPushToken(profile.id).catch(() => {});
+      }
+      if (!navigation?.replace) return;
+
+      if (!profile || !profile.role) {
+        navigation.replace('MainApp');
+        return;
+      }
+      switch (profile.role) {
+        case 'super_admin':
+          navigation.replace('SuperAdmin', { profile });
+          break;
+        case 'kitchen':
+          navigation.replace('KitchenApp', { profile });
+          break;
+        case 'waiter':
+          navigation.replace('WaiterApp', { profile });
+          break;
+        case 'owner':
+        case 'manager':
+        default:
+          navigation.replace('MainApp', { profile });
+          break;
+      }
+    } catch (e) {
+      console.log('Navigation error in LoginScreen:', e);
     }
   };
 
@@ -99,7 +105,7 @@ export default function LoginScreen({ navigation }) {
     return (
       <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
         <ActivityIndicator size="large" color="#0ea5e9" />
-        <Text style={{ color: '#94a3b8', marginTop: 12, fontSize: 16 }}>Checking session...</Text>
+        <Text style={{ color: '#94a3b8', marginTop: 12, fontSize: 16 }}>Loading SmartDine...</Text>
       </View>
     );
   }
