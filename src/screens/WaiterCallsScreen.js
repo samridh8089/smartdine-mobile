@@ -40,8 +40,12 @@ export default function WaiterCallsScreen({ route }) {
     }, 4000);
 
     return () => {
-      supabase.removeChannel(channel);
-      clearInterval(interval);
+      if (channel) {
+        try {
+          supabase.removeChannel(channel);
+        } catch (_) {}
+      }
+      if (interval) clearInterval(interval);
     };
   }, [restaurantId]);
 

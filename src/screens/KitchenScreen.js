@@ -94,9 +94,15 @@ export default function KitchenScreen({ route }) {
     }, 3000);
 
     return () => {
-      supabase.removeChannel(channel);
-      clearInterval(interval);
-      stopAlarm(); // Stop alarm when kitchen screen unmounts
+      if (channel) {
+        try {
+          supabase.removeChannel(channel);
+        } catch (_) {}
+      }
+      if (interval) clearInterval(interval);
+      try {
+        stopAlarm();
+      } catch (_) {}
     };
   }, [restaurantId]);
 

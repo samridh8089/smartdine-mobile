@@ -39,8 +39,12 @@ export default function LiveNotificationListener({ profile }) {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(ordersSubscription);
-      supabase.removeChannel(callsSubscription);
+      if (ordersSubscription) {
+        try { supabase.removeChannel(ordersSubscription); } catch (_) {}
+      }
+      if (callsSubscription) {
+        try { supabase.removeChannel(callsSubscription); } catch (_) {}
+      }
     };
   }, [profile]);
 

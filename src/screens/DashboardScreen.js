@@ -36,7 +36,11 @@ export default function DashboardScreen({ route }) {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      if (channel) {
+        try {
+          supabase.removeChannel(channel);
+        } catch (_) {}
+      }
     };
   }, [restaurantId]);
 
