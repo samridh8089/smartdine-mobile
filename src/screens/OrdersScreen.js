@@ -58,6 +58,28 @@ function consolidateItems(itemList = [], orderStatus = '') {
   }
 }
 
+// Calculate grand total excluding cancelled orders / items
+function getCalculatedOrderTotal(order, newItems = [], servedItems = []) {
+  if (!order || order.status === 'cancelled') return 0;
+
+  let total = 0;
+
+  // Always sum served items
+  servedItems.forEach(item => {
+    total += (Number(item.price) || 0) * (Number(item.quantity) || 1);
+  });
+
+  // Only sum new items if order is not cancelled
+  if (!['cancelled', 'rejected'].includes(order.status)) {
+    newItems.forEach(item => {
+      total += (Number(item.price) || 0) * (Number(item.quantity) || 1);
+    });
+  }
+
+  // Fallback to order.total if calculated total is 0
+  return total > 0 ? total : Number(order.total || 0);
+}
+
 const PRESET_CANCEL_REASONS = [
   'Item Out of Stock',
   'Kitchen Busy / Overflow',
@@ -342,6 +364,7 @@ export default function OrdersScreen({ route }) {
               let servedItems = [];
               let newCount = 0;
               let servedCount = 0;
+              let grandTotal = 0;
 
               try {
                 const res = consolidateItems(order.order_items || [], order.status);
@@ -349,6 +372,7 @@ export default function OrdersScreen({ route }) {
                 servedItems = res.servedItems || [];
                 newCount = newItems.reduce((s, i) => s + i.quantity, 0);
                 servedCount = servedItems.reduce((s, i) => s + i.quantity, 0);
+                grandTotal = getCalculatedOrderTotal(order, newItems, servedItems);
               } catch (_) {}
 
               return (
@@ -437,21 +461,9 @@ export default function OrdersScreen({ route }) {
                     )}
 
                     <View style={styles.divider} />
-                    {order.subtotal ? (
-                      <View style={styles.summaryRow}>
-                        <Text style={styles.summaryLabel}>Subtotal:</Text>
-                        <Text style={styles.summaryValue}>₹{Number(order.subtotal).toFixed(2)}</Text>
-                      </View>
-                    ) : null}
-                    {order.gst ? (
-                      <View style={styles.summaryRow}>
-                        <Text style={styles.summaryLabel}>GST Tax:</Text>
-                        <Text style={styles.summaryValue}>₹{Number(order.gst).toFixed(2)}</Text>
-                      </View>
-                    ) : null}
                     <View style={styles.summaryRow}>
-                      <Text style={styles.grandTotalLabel}>Grand Total:</Text>
-                      <Text style={styles.grandTotalValue}>₹{Number(order.total || 0).toFixed(2)}</Text>
+                      <Text style={styles.grandTotalLabel}>Grand Total (Served Items):</Text>
+                      <Text style={styles.grandTotalValue}>₹{grandTotal.toFixed(2)}</Text>
                     </View>
                   </View>
 
