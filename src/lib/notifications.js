@@ -3,34 +3,39 @@ import { supabase } from './supabase';
 
 let Notifications = null;
 
-try {
-  Notifications = require('expo-notifications');
-
-  if (Notifications && Notifications.setNotificationHandler) {
-    Notifications.setNotificationHandler({
-      handleNotification: async () => ({
-        shouldShowAlert: true,
-        shouldPlaySound: true,
-        shouldSetBadge: true,
-      }),
-    });
+function getNotifications() {
+  if (!Notifications) {
+    try {
+      Notifications = require('expo-notifications');
+      if (Notifications && Notifications.setNotificationHandler) {
+        Notifications.setNotificationHandler({
+          handleNotification: async () => ({
+            shouldShowAlert: true,
+            shouldPlaySound: true,
+            shouldSetBadge: true,
+          }),
+        });
+      }
+    } catch (e) {
+      console.log('expo-notifications load warning:', e);
+    }
   }
-} catch (e) {
-  console.log('expo-notifications load warning:', e);
+  return Notifications;
 }
 
 // Configure High-Importance Android Notification Channel for loud alerts
 export async function setupNotificationChannel() {
-  if (Platform.OS === 'android' && Notifications && Notifications.setNotificationChannelAsync) {
+  const Notifs = getNotifications();
+  if (Platform.OS === 'android' && Notifs && Notifs.setNotificationChannelAsync) {
     try {
-      await Notifications.setNotificationChannelAsync('smartdine-urgent-channel', {
+      await Notifs.setNotificationChannelAsync('smartdine-urgent-channel', {
         name: 'SmartDine Urgent Order & Waiter Alerts',
-        importance: Notifications.AndroidImportance ? Notifications.AndroidImportance.MAX : 5,
+        importance: Notifs.AndroidImportance ? Notifs.AndroidImportance.MAX : 5,
         vibrationPattern: [0, 1000, 500, 1000, 500, 1000],
         lightColor: '#EF4444',
         sound: 'default',
-        lockscreenVisibility: Notifications.AndroidNotificationVisibility
-          ? Notifications.AndroidNotificationVisibility.PUBLIC
+        lockscreenVisibility: Notifs.AndroidNotificationVisibility
+          ? Notifs.AndroidNotificationVisibility.PUBLIC
           : 1,
         bypassDnd: true,
         showBadge: true,
@@ -44,7 +49,8 @@ export async function setupNotificationChannel() {
 // Request permission and register Expo Push Token in Supabase profile
 export async function registerPushToken(userIdParam = null) {
   try {
-    if (!Notifications) return null;
+    const Notifs = getNotifications();
+    if (!Notifs) return null;
 
     let targetUserId = userIdParam;
     if (!targetUserId) {
@@ -52,10 +58,10 @@ export async function registerPushToken(userIdParam = null) {
       targetUserId = session?.user?.id;
     }
 
-    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    const { status: existingStatus } = await Notifs.getPermissionsAsync();
     let finalStatus = existingStatus;
     if (existingStatus !== 'granted') {
-      const { status } = await Notifications.requestPermissionsAsync();
+      const { status } = await Notifs.requestPermissionsAsync();
       finalStatus = status;
     }
 
@@ -65,8 +71,8 @@ export async function registerPushToken(userIdParam = null) {
 
     let token = null;
     try {
-      if (Notifications.getExpoPushTokenAsync) {
-        const tokenData = await Notifications.getExpoPushTokenAsync({
+      if (Notifs.getExpoPushTokenAsync) {
+        const tokenData = await Notifs.getExpoPushTokenAsync({
           projectId: '407eef68-5b75-4b63-b679-8123df863ea7',
         });
         token = tokenData?.data;
@@ -95,16 +101,17 @@ export async function registerPushToken(userIdParam = null) {
 export async function sendSystemAlert(title, body, data = {}) {
   try {
     Vibration.vibrate([0, 1000, 500, 1000]);
+    const Notifs = getNotifications();
 
-    if (Notifications && Notifications.scheduleNotificationAsync) {
-      await Notifications.scheduleNotificationAsync({
+    if (Notifs && Notifs.scheduleNotificationAsync) {
+      await Notifs.scheduleNotificationAsync({
         content: {
           title,
           body,
           sound: 'default',
           channelId: 'smartdine-urgent-channel',
-          priority: Notifications.AndroidNotificationPriority
-            ? Notifications.AndroidNotificationPriority.MAX
+          priority: Notifs.AndroidNotificationPriority
+            ? Notifs.AndroidNotificationPriority.MAX
             : 2,
           vibrate: [0, 1000, 500, 1000],
           data,

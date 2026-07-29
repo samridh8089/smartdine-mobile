@@ -19,7 +19,6 @@
     },
     "android": {
       "package": "com.smartdine.mobile",
-      "googleServicesFile": "./google-services.json",
       "permissions": [
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE",
