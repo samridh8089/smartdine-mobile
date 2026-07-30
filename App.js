@@ -73,6 +73,24 @@ export default function App() {
   useEffect(() => {
     safeSetupNotifications();
 
+    // Auto-check and apply latest EAS OTA update on startup (prevents booting old embedded APK bundle)
+    const checkUpdates = async () => {
+      if (__DEV__) return;
+      try {
+        const Updates = require('expo-updates');
+        if (Updates && Updates.checkForUpdateAsync) {
+          const update = await Updates.checkForUpdateAsync();
+          if (update.isAvailable) {
+            await Updates.fetchUpdateAsync();
+            await Updates.reloadAsync();
+          }
+        }
+      } catch (e) {
+        console.log('EAS Updates auto-check error (non-fatal):', e.message);
+      }
+    };
+    checkUpdates();
+
     let subscription;
     try {
       const { data } = supabase.auth.onAuthStateChange((event) => {
