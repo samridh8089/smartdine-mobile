@@ -79,17 +79,30 @@ export default function DashboardScreen({ route }) {
           .filter(o => o?.status !== 'cancelled')
           .reduce((sum, o) => sum + (Number(o?.total) || 0), 0);
         
-        const activeTablesSet = new Set(
-          orders
-            .filter(o => ['new', 'accepted', 'preparing', 'ready', 'served'].includes(o?.status))
-            .map(o => o?.table_name || o?.table_id)
-            .filter(Boolean)
-        );
+        const activeOrders = orders.filter(o => ['new', 'accepted', 'preparing', 'ready', 'served'].includes(o?.status));
+        
+        const activeTableMap = new Map();
+        activeOrders.forEach(o => {
+          const name = o?.table_name || o?.table_id;
+          if (name && o?.order_type !== 'takeaway' && o?.order_type !== 'reservation') {
+            activeTableMap.set(o.table_id || name, name);
+          }
+        });
+
+        const activeTableNamesList = Array.from(activeTableMap.values())
+          .map(name => String(name).replace(/^Table\s*/i, ''))
+          .sort((a, b) => {
+            const numA = parseInt(a, 10);
+            const numB = parseInt(b, 10);
+            if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+            return a.localeCompare(b);
+          });
 
         setStats({
           todayOrders: totalCount,
           todayRevenue: totalRev,
-          activeTables: activeTablesSet.size,
+          activeTables: activeTableMap.size,
+          activeTableNames: activeTableNamesList
         });
       }
     } catch (e) {
@@ -144,7 +157,12 @@ export default function DashboardScreen({ route }) {
               <Text style={[styles.metricValue, { color: '#0ea5e9' }]}>
                 {stats.activeTables}
               </Text>
-              <Text style={styles.metricSub}>Tables currently dining</Text>
+              <Text style={[styles.metricSub, stats.activeTableNames?.length > 0 && { color: '#059669', fontWeight: 'bold' }]}>
+                {stats.activeTableNames?.length > 0 
+                  ? `Active: Table ${stats.activeTableNames.join(', ')}`
+                  : 'No active tables'
+                }
+              </Text>
             </View>
           </View>
         </ScrollView>
