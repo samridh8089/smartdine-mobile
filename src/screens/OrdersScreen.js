@@ -232,18 +232,42 @@ export default function OrdersScreen({ route }) {
 
   const updateStatus = async (id, status) => {
     try {
+      const staffName = profile?.full_name || profile?.role || 'Staff';
+      const updatePayload = {
+        status,
+        updated_at: new Date().toISOString()
+      };
+
+      // When marking completed, auto-mark payment as paid at the same time (1-click completion & payment verification)
+      if (status === 'completed') {
+        updatePayload.payment_status = 'paid';
+        updatePayload.paid_at = new Date().toISOString();
+        updatePayload.marked_paid_by = staffName;
+        updatePayload.completed_at = new Date().toISOString();
+        updatePayload.completed_by = staffName;
+      }
+
       const { error } = await supabase
         .from('orders')
-        .update({ status, updated_at: new Date().toISOString() })
+        .update(updatePayload)
         .eq('id', id);
 
       if (!error) {
-        if (status === 'ready' || status === 'served' || status === 'completed') {
+        if (['ready', 'served', 'completed'].includes(status)) {
           try {
             await supabase
               .from('order_items')
               .update({ is_served: true, status: 'served' })
-              .eq('order_id', id);
+              .eq('order_id', id)
+              .neq('status', 'cancelled');
+          } catch (_) {}
+
+          try {
+            await supabase
+              .from('order_batches')
+              .update({ status: status === 'completed' ? 'served' : status, updated_at: new Date().toISOString() })
+              .eq('order_id', id)
+              .neq('status', 'cancelled');
           } catch (_) {}
         }
 
