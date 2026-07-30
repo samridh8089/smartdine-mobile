@@ -164,7 +164,6 @@ export default function WaiterPunchScreen({ route }) {
         subtotal: Number(subtotal.toFixed(2)),
         gst: Number(gst.toFixed(2)),
         total: Number(grandTotal.toFixed(2)),
-        placed_by: profile.full_name || profile.role || 'Staff POS',
       };
 
       const { data: createdOrder, error: orderError } = await supabase
@@ -175,9 +174,21 @@ export default function WaiterPunchScreen({ route }) {
 
       if (orderError) throw orderError;
 
+      // Create Batch #1 for the order
+      const { data: createdBatch } = await supabase
+        .from('order_batches')
+        .insert({
+          order_id: createdOrder.id,
+          batch_number: 1,
+          status: 'new'
+        })
+        .select()
+        .single();
+
       // Insert Items
       const itemsPayload = cart.map(c => ({
         order_id: createdOrder.id,
+        batch_id: createdBatch?.id,
         menu_item_id: c.menuItem.id,
         menu_item_name: c.menuItem.name,
         quantity: c.quantity,
