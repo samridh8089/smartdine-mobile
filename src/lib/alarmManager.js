@@ -1,16 +1,54 @@
 /**
- * AlarmManager — Safe Continuous Alarm for SmartDine
+ * AlarmManager — Continuous Alarm with Custom Order Tune for SmartDine
  *
- * Uses Vibration + expo-notifications for loud alerts.
- * Completely eliminates native audio player calls to prevent screen blackout crashes.
+ * Plays assets/order_tune.mp3 continuously in background and lockscreen
+ * using expo-av Audio + Vibration + expo-notifications MAX priority alert.
  */
 
 import { Vibration } from 'react-native';
+import { Audio } from 'expo-av';
 
 // ─── Internal State ─────────────────────────────────────────────────────────
 let _isPlaying = false;
 let _currentAlarmType = null;
 let _vibrationInterval = null;
+let _soundInstance = null;
+
+// ─── Audio Setup & Playback ──────────────────────────────────────────────
+async function _playOrderTune() {
+  try {
+    await _stopSound();
+
+    // Enable background & lockscreen playback audio mode
+    await Audio.setAudioModeAsync({
+      playsInSilentModeIOS: true,
+      staysActiveInBackground: true,
+      shouldDuckAndroid: false,
+      playThroughEarpieceAndroid: false,
+    });
+
+    const { sound } = await Audio.Sound.createAsync(
+      require('../../assets/order_tune.mp3'),
+      { shouldPlay: true, isLooping: true, volume: 1.0 }
+    );
+
+    _soundInstance = sound;
+  } catch (e) {
+    console.log('[AlarmManager] Audio playback error:', e?.message || e);
+  }
+}
+
+async function _stopSound() {
+  try {
+    if (_soundInstance) {
+      await _soundInstance.stopAsync();
+      await _soundInstance.unloadAsync();
+      _soundInstance = null;
+    }
+  } catch (_) {
+    _soundInstance = null;
+  }
+}
 
 // ─── Safe lazy load of expo-notifications ────────────────────────────────
 function getNotifications() {
@@ -25,12 +63,11 @@ function getNotifications() {
 function _startVibration() {
   try {
     _stopVibration();
-    Vibration.vibrate([0, 800, 400], true);
+    Vibration.vibrate([0, 1000, 500, 1000], true);
 
-    // Backup interval in case OS cancels vibration
     _vibrationInterval = setInterval(() => {
       try {
-        Vibration.vibrate([0, 800, 400], true);
+        Vibration.vibrate([0, 1000, 500, 1000], true);
       } catch (_) {}
     }, 4000);
   } catch (e) {
@@ -61,7 +98,7 @@ async function _sendNotification(title, body, type) {
         sound: 'default',
         channelId: 'smartdine-urgent-channel',
         priority: 'max',
-        vibrate: [0, 800, 400, 800],
+        vibrate: [0, 1000, 500, 1000],
         data: { alarmType: type },
       },
       trigger: null,
@@ -74,7 +111,7 @@ async function _sendNotification(title, body, type) {
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
- * Start continuous alarm (vibration + notification).
+ * Start continuous alarm (order_tune.mp3 + vibration + notification).
  */
 export async function startAlarm(type, title, body) {
   try {
@@ -83,13 +120,16 @@ export async function startAlarm(type, title, body) {
     _currentAlarmType = type;
     _isPlaying = true;
 
-    // 1. Safe vibration loop
+    // 1. Play custom order_tune.mp3 audio looping in background
+    _playOrderTune().catch(() => {});
+
+    // 2. Safe vibration loop
     _startVibration();
 
-    // 2. High priority notification
+    // 3. High priority notification
     _sendNotification(title, body, type).catch(() => {});
 
-    console.log('[AlarmManager] Safe alarm started:', type);
+    console.log('[AlarmManager] Safe alarm started with order_tune.mp3:', type);
   } catch (e) {
     console.log('[AlarmManager] startAlarm error:', e.message);
   }
@@ -103,6 +143,7 @@ export async function stopAlarm() {
     _isPlaying = false;
     _currentAlarmType = null;
     _stopVibration();
+    await _stopSound();
     console.log('[AlarmManager] Alarm stopped.');
   } catch (e) {
     console.log('[AlarmManager] stopAlarm error:', e.message);
