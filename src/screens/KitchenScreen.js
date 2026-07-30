@@ -298,69 +298,106 @@ export default function KitchenScreen({ route }) {
       const cancellerName = profile?.full_name || 'Kitchen Staff';
       const reasonText = cancellationReason || 'Kitchen Closed';
 
-      const targetOrder = (orders || []).find(o => o.id === cancellingOrderId);
-      const items = targetOrder?.order_items || [];
+      // Fetch all batches and items for this order from Supabase
+      const { data: batches } = await supabase
+        .from('order_batches')
+        .select('*')
+        .eq('order_id', cancellingOrderId);
 
-      let latestTime = 0;
-      items.forEach(item => {
-        if (item?.created_at) {
-          const t = new Date(item.created_at).getTime();
-          if (!isNaN(t) && t > latestTime) latestTime = t;
-        }
-      });
+      const { data: items } = await supabase
+        .from('order_items')
+        .select('*')
+        .eq('order_id', cancellingOrderId);
 
-      const hasServedItems = items.some(item => {
-        const itemTime = item?.created_at ? new Date(item.created_at).getTime() : 0;
-        const isOlderBatch = (latestTime > 0 && itemTime > 0 && (latestTime - itemTime > 3000));
-        return Boolean(item?.is_served || item?.is_prepared || item?.status === 'served' || item?.status === 'ready' || isOlderBatch);
-      });
+      const safeBatches = batches || [];
+      const safeItems = items || [];
 
-      if (hasServedItems) {
-        // Calculate subtotal/total of ONLY served items!
-        const servedTotal = items.reduce((sum, item) => {
-          const itemTime = item?.created_at ? new Date(item.created_at).getTime() : 0;
-          const isOlderBatch = (latestTime > 0 && itemTime > 0 && (latestTime - itemTime > 3000));
-          const isServed = Boolean(item?.is_served || item?.is_prepared || item?.status === 'served' || item?.status === 'ready' || isOlderBatch);
-          if (isServed && !item?.is_cancelled && item?.status !== 'cancelled') {
-            return sum + ((Number(item.price) || 0) * (Number(item.quantity) || 1));
-          }
-          return sum;
-        }, 0);
+      // Find the uncancelled batches
+      const uncancelledBatches = safeBatches.filter(b => b.status !== 'cancelled');
+      const latestUncancelledBatch = [...uncancelledBatches].sort((a, b) => b.batch_number - a.batch_number)[0];
 
-        // Update latest order_batches status to 'cancelled' in Supabase!
-        try {
+      if (uncancelledBatches.length > 1 || (latestUncancelledBatch && latestUncancelledBatch.status !== 'new')) {
+        // Cancel ONLY the target/latest batch
+        const targetBatchId = latestUncancelledBatch ? latestUncancelledBatch.id : null;
+
+        if (targetBatchId) {
           await supabase
             .from('order_batches')
             .update({ status: 'cancelled', updated_at: new Date().toISOString() })
-            .eq('order_id', cancellingOrderId)
-            .neq('status', 'served');
-        } catch (_) {}
+            .eq('id', targetBatchId);
 
-        try {
           await supabase
             .from('order_items')
             .update({ is_cancelled: true, status: 'cancelled' })
-            .eq('order_id', cancellingOrderId)
-            .eq('is_served', false);
-        } catch (_) {}
+            .eq('batch_id', targetBatchId);
+        }
 
-        await supabase
-          .from('orders')
-          .update({
-            status: 'served',
-            subtotal: servedTotal,
-            total: servedTotal,
-            cancelled_by: cancellerName,
-            cancellation_reason: reasonText,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', cancellingOrderId);
+        // Re-calculate valid items (items from non-cancelled batches)
+        const remainingValidItems = safeItems.filter(item => {
+          if (item.is_cancelled || item.status === 'cancelled') return false;
+          if (item.batch_id === targetBatchId) return false;
+          if (item.batch_id) {
+            const b = safeBatches.find(batch => batch.id === item.batch_id);
+            if (b && b.status === 'cancelled') return false;
+          }
+          return true;
+        });
+
+        const validTotal = remainingValidItems.reduce((sum, item) => sum + ((Number(item.price) || 0) * (Number(item.quantity) || 1)), 0);
+
+        if (remainingValidItems.length > 0) {
+          // Keep parent order active!
+          const remainingBatches = uncancelledBatches.filter(b => b.id !== targetBatchId);
+          const highestStatus = remainingBatches.some(b => b.status === 'served') ? 'served'
+            : remainingBatches.some(b => b.status === 'ready') ? 'ready'
+            : remainingBatches.some(b => b.status === 'preparing') ? 'preparing'
+            : remainingBatches.some(b => b.status === 'accepted') ? 'accepted'
+            : 'new';
+
+          await supabase
+            .from('orders')
+            .update({
+              status: highestStatus,
+              subtotal: validTotal,
+              total: validTotal,
+              cancelled_by: cancellerName,
+              cancellation_reason: reasonText,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', cancellingOrderId);
+        } else {
+          // No valid items left, cancel whole order
+          await supabase
+            .from('orders')
+            .update({
+              status: 'cancelled',
+              subtotal: 0,
+              total: 0,
+              cancelled_by: cancellerName,
+              cancellation_reason: reasonText,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', cancellingOrderId);
+        }
       } else {
-        // Entire order cancelled from start
+        // Entire order cancelled from start (only 1 batch and it was new)
+        if (latestUncancelledBatch) {
+          await supabase
+            .from('order_batches')
+            .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+            .eq('id', latestUncancelledBatch.id);
+        }
+        await supabase
+          .from('order_items')
+          .update({ is_cancelled: true, status: 'cancelled' })
+          .eq('order_id', cancellingOrderId);
+
         await supabase
           .from('orders')
           .update({
             status: 'cancelled',
+            subtotal: 0,
+            total: 0,
             cancelled_by: cancellerName,
             cancellation_reason: reasonText,
             updated_at: new Date().toISOString(),
