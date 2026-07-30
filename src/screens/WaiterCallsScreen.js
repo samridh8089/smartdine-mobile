@@ -61,6 +61,27 @@ export default function WaiterCallsScreen({ route }) {
     };
   }, [restaurantId]);
 
+  // Auto-trigger continuous alarm whenever there is a pending waiter call request
+  useEffect(() => {
+    if (!calls || calls.length === 0) {
+      stopAlarm();
+      return;
+    }
+
+    const hasPendingCall = calls.some(c => c.status === 'pending');
+
+    if (hasPendingCall) {
+      const firstPending = calls.find(c => c.status === 'pending');
+      startAlarm(
+        'waiter_call',
+        'WAITER CALL AT TABLE',
+        `Table ${firstPending?.table_name || 'N/A'} - ${firstPending?.type === 'request_bill' ? 'Bill Requested' : 'Staff Assistance'}`
+      );
+    } else {
+      stopAlarm();
+    }
+  }, [calls]);
+
   const fetchCalls = async (isBackgroundPoll = false) => {
     try {
       let query = supabase

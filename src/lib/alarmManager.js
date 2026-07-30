@@ -19,20 +19,25 @@ async function _playOrderTune() {
   try {
     await _stopSound();
 
-    // Enable background & lockscreen playback audio mode
+    // Set full background & lockscreen audio mode
     await Audio.setAudioModeAsync({
-      playsInSilentModeIOS: true,
+      allowsRecordingIOS: false,
       staysActiveInBackground: true,
+      interruptionModeIOS: 1, // DuckOthers
+      playsInSilentModeIOS: true,
       shouldDuckAndroid: false,
+      interruptionModeAndroid: 1, // DoNotMix
       playThroughEarpieceAndroid: false,
     });
 
-    const { sound } = await Audio.Sound.createAsync(
+    const soundObject = new Audio.Sound();
+    await soundObject.loadAsync(
       require('../../assets/order_tune.mp3'),
       { shouldPlay: true, isLooping: true, volume: 1.0 }
     );
-
-    _soundInstance = sound;
+    await soundObject.playAsync();
+    _soundInstance = soundObject;
+    console.log('[AlarmManager] Playing order_tune.mp3 successfully');
   } catch (e) {
     console.log('[AlarmManager] Audio playback error:', e?.message || e);
   }

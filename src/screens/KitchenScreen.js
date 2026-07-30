@@ -178,6 +178,29 @@ export default function KitchenScreen({ route }) {
     };
   }, [restaurantId]);
 
+  // Auto-trigger continuous alarm whenever there is an unaccepted new order or batch
+  useEffect(() => {
+    if (!orders || orders.length === 0) {
+      stopAlarm();
+      return;
+    }
+
+    const hasNewOrder = orders.some(o => 
+      o.status === 'new' || (o.batches || []).some(b => b.status === 'new')
+    );
+
+    if (hasNewOrder) {
+      const firstNew = orders.find(o => o.status === 'new' || (o.batches || []).some(b => b.status === 'new'));
+      startAlarm(
+        'new_order',
+        'NEW KITCHEN ORDER',
+        `Table ${firstNew?.table_name || 'N/A'} - Total: ₹${firstNew?.total || 0}`
+      );
+    } else {
+      stopAlarm();
+    }
+  }, [orders]);
+
   const fetchRestaurantInfo = async () => {
     if (!restaurantId) return;
     try {

@@ -171,6 +171,29 @@ export default function OrdersScreen({ route }) {
     };
   }, [restaurantId]);
 
+  // Auto-trigger continuous alarm whenever there is an unattended new order or food ready to serve
+  useEffect(() => {
+    if (!orders || orders.length === 0) {
+      stopAlarm();
+      return;
+    }
+
+    const hasUnattended = orders.some(o => 
+      o.status === 'new' || o.status === 'ready' || (o.batches || []).some(b => b.status === 'new' || b.status === 'ready')
+    );
+
+    if (hasUnattended) {
+      const target = orders.find(o => o.status === 'new' || o.status === 'ready' || (o.batches || []).some(b => b.status === 'new' || b.status === 'ready'));
+      startAlarm(
+        'waiter_order',
+        target?.status === 'ready' ? 'FOOD READY TO SERVE' : 'NEW ORDER RECEIVED',
+        `Table ${target?.table_name || 'N/A'} - Total: ₹${target?.total || 0}`
+      );
+    } else {
+      stopAlarm();
+    }
+  }, [orders]);
+
   const fetchRestaurantName = async () => {
     if (!restaurantId) return;
     try {
