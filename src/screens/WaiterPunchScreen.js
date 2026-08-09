@@ -88,7 +88,11 @@ export default function WaiterPunchScreen({ route }) {
       : 'Takeaway';
 
     try {
-      // 1. Create the order
+      const subtotal = cartTotal;
+      const gst = parseFloat((subtotal * 0.05).toFixed(2));
+      const grandTotal = parseFloat((subtotal + gst).toFixed(2));
+
+      // 1. Insert main order into 'orders'
       const orderData = {
         restaurant_id: restaurantId,
         order_type: orderType,
@@ -96,54 +100,75 @@ export default function WaiterPunchScreen({ route }) {
         payment_status: markPaid ? 'paid' : 'pending',
         table_name: tableNameStr,
         table_id: orderType === 'dine_in' ? selectedTable?.id : null,
-        total: cartTotal,
-        special_instructions: notes,
-        created_by: profile.id,
+        subtotal: subtotal,
+        gst: gst,
+        total: grandTotal,
+        special_instructions: notes || '',
       };
 
       const { data: order, error: orderErr } = await supabase
-        .from('orders').insert(orderData).select().single();
-      if (orderErr) throw orderErr;
+        .from('orders')
+        .insert(orderData)
+        .select()
+        .single();
 
-      // 2. Create order items
+      if (orderErr) {
+        throw new Error(`Order insertion failed: ${orderErr.message}`);
+      }
+
+      if (!order?.id) {
+        throw new Error('Order creation failed: No order record returned.');
+      }
+
+      // 2. Insert kitchen batch into 'order_batches'
+      const batchData = {
+        order_id: order.id,
+        batch_number: 1,
+        status: 'new',
+        special_instructions: notes || '',
+      };
+
+      const { data: batch, error: batchErr } = await supabase
+        .from('order_batches')
+        .insert(batchData)
+        .select()
+        .single();
+
+      if (batchErr) {
+        throw new Error(`Kitchen batch creation failed: ${batchErr.message}`);
+      }
+
+      // 3. Insert line items into 'order_items'
       const itemsData = cart.map(item => ({
         order_id: order.id,
-        item_id: item.id,
-        name: item.name,
+        batch_id: batch?.id || null,
+        menu_item_id: item.id,
+        menu_item_name: item.name,
         quantity: item.quantity,
         price: item.price,
         notes: item.notes || '',
       }));
-      const { error: itemsErr } = await supabase.from('order_items').insert(itemsData);
-      if (itemsErr) console.log('order_items insert warning:', itemsErr.message);
 
-      // 3. Create kitchen batch for real-time kitchen display
-      const batchData = {
-        order_id: order.id,
-        restaurant_id: restaurantId,
-        table_id: orderType === 'dine_in' ? selectedTable?.id : null,
-        status: 'new',
-        items: cart.map(item => ({
-          id: item.id,
-          name: item.name,
-          item_name: item.name,
-          quantity: item.quantity,
-          price: item.price,
-          is_veg: item.is_veg !== false,
-          notes: item.notes || '',
-        })),
-      };
+      const { error: itemsErr } = await supabase
+        .from('order_items')
+        .insert(itemsData);
 
-      const { error: batchErr } = await supabase.from('order_batches').insert(batchData);
-      if (batchErr) console.log('order_batches insert warning:', batchErr.message);
+      if (itemsErr) {
+        throw new Error(`Order items creation failed: ${itemsErr.message}`);
+      }
 
-      Alert.alert('Order Placed!', `Order for ${tableNameStr} submitted successfully`);
+      // ONLY reach here if ALL 3 database insertions succeeded cleanly!
+      Alert.alert(
+        'Order Placed! 🎉',
+        `Order #${order.id.slice(0, 6)} for ${tableNameStr} (Total: ₹${grandTotal}) submitted successfully`
+      );
       setCart([]);
       setNotes('');
       setMarkPaid(false);
       setShowCart(false);
     } catch (e) {
-      Alert.alert('Error', e.message || 'Failed to place order');
+      console.log('[WaiterPunch] submitOrder Error:', e?.message);
+      Alert.alert('Order Placement Failed', e?.message || 'Could not save order to database.');
     } finally {
       setSubmitting(false);
     }

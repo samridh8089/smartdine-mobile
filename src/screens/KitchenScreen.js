@@ -456,7 +456,7 @@ export default function KitchenScreen({ route }) {
 
         {/* Action Buttons */}
         <View style={styles.actionRow}>
-          {activeTab === 'new' && (
+          {(batch.status === 'new' || batch.status === 'pending') && (
             <>
               <TouchableOpacity
                 style={[styles.btn, { backgroundColor: '#ef4444', flex: 1, marginRight: 8 }]}
@@ -483,41 +483,41 @@ export default function KitchenScreen({ route }) {
             </>
           )}
 
-          {activeTab === 'preparing' && (
-            batch.status === 'accepted' ? (
-              <TouchableOpacity
-                style={[styles.btn, { backgroundColor: COLORS.primary, flex: 1 }]}
-                disabled={isBusy}
-                onPress={() => updateBatchStatus(batch, 'preparing')}
-              >
-                {isBusy ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <>
-                    <Ionicons name="restaurant-outline" size={18} color="#fff" style={{ marginRight: 6 }} />
-                    <Text style={styles.btnText}>Start Cooking</Text>
-                  </>
-                )}
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity
-                style={[styles.btn, { backgroundColor: '#22c55e', flex: 1 }]}
-                disabled={isBusy}
-                onPress={() => updateBatchStatus(batch, 'ready')}
-              >
-                {isBusy ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <>
-                    <Ionicons name="checkmark-done-circle-outline" size={18} color="#fff" style={{ marginRight: 6 }} />
-                    <Text style={styles.btnText}>Mark Ready</Text>
-                  </>
-                )}
-              </TouchableOpacity>
-            )
+          {batch.status === 'accepted' && (
+            <TouchableOpacity
+              style={[styles.btn, { backgroundColor: COLORS.primary, flex: 1 }]}
+              disabled={isBusy}
+              onPress={() => updateBatchStatus(batch, 'preparing')}
+            >
+              {isBusy ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <>
+                  <Ionicons name="restaurant-outline" size={18} color="#fff" style={{ marginRight: 6 }} />
+                  <Text style={styles.btnText}>Start Cooking</Text>
+                </>
+              )}
+            </TouchableOpacity>
           )}
 
-          {activeTab === 'ready' && (
+          {batch.status === 'preparing' && (
+            <TouchableOpacity
+              style={[styles.btn, { backgroundColor: '#22c55e', flex: 1 }]}
+              disabled={isBusy}
+              onPress={() => updateBatchStatus(batch, 'ready')}
+            >
+              {isBusy ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <>
+                  <Ionicons name="checkmark-done-circle-outline" size={18} color="#fff" style={{ marginRight: 6 }} />
+                  <Text style={styles.btnText}>Mark Ready</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
+
+          {batch.status === 'ready' && (
             <View style={styles.waitingNotice}>
               <Ionicons name="checkmark-circle" size={18} color="#22c55e" style={{ marginRight: 6 }} />
               <Text style={styles.waitingText}>Ready for Waiter Pickup</Text>
