@@ -1,556 +1,638 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  View, Text, StyleSheet, FlatList, TouchableOpacity, 
-  TextInput, ScrollView, Alert, ActivityIndicator, KeyboardAvoidingView, Platform
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput,
+  ActivityIndicator, ScrollView, Modal, Platform,
+  Alert, KeyboardAvoidingView,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
-import { sendPushToRestaurantStaff } from '../lib/notifications';
+import { COLORS, FONTS, RADIUS, SHADOWS, formatCurrency } from '../lib/theme';
 
 export default function WaiterPunchScreen({ route }) {
-  const profile = route?.params?.profile || {};
-  const [restaurantId, setRestaurantId] = useState(profile.restaurant_id || null);
-  const [restaurant, setRestaurant] = useState(null);
+  const profile = route?.params?.profile ?? {};
+  const restaurantId = profile?.restaurant_id;
 
+  const [orderType, setOrderType] = useState('dine_in');
   const [tables, setTables] = useState([]);
   const [categories, setCategories] = useState([]);
   const [menuItems, setMenuItems] = useState([]);
-
+  const [selectedTable, setSelectedTable] = useState(null);
+  const [selectedCategory, setSelectedCategory] = useState('all');
+  const [cart, setCart] = useState([]);
+  const [search, setSearch] = useState('');
+  const [notes, setNotes] = useState('');
+  const [markPaid, setMarkPaid] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [showCart, setShowCart] = useState(false);
 
-  // Form State
-  const [orderType, setOrderType] = useState('dine_in'); // 'dine_in' | 'takeaway'
-  const [selectedTable, setSelectedTable] = useState(null);
-  const [selectedCategoryId, setSelectedCategoryId] = useState('all');
-  const [searchQuery, setSearchQuery] = useState('');
+  useEffect(() => { loadData(); }, [restaurantId]);
 
-  const [cart, setCart] = useState([]);
-  
-  // Payment Options
-  const [markPaid, setMarkPaid] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState('cash');
-
-  useEffect(() => {
-    initData();
-  }, []);
-
-  const initData = async () => {
-    setLoading(true);
+  const loadData = useCallback(async () => {
+    if (!restaurantId) { setLoading(false); return; }
     try {
-      let restId = restaurantId;
-      let userProfile = profile;
-
-      if (!restId || !userProfile.full_name) {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user?.id) {
-          const { data: prof } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', session.user.id)
-            .single();
-          if (prof) {
-            userProfile = prof;
-            restId = prof.restaurant_id;
-            setRestaurantId(restId);
-          }
-        }
-      }
-
-      if (!restId) {
-        setLoading(false);
-        return;
-      }
-
-      // 1. Fetch Restaurant Info
-      const { data: restData } = await supabase
-        .from('restaurants')
-        .select('*')
-        .eq('id', restId)
-        .single();
-      if (restData) setRestaurant(restData);
-
-      // 2. Fetch Tables
-      const { data: tablesData } = await supabase
-        .from('tables')
-        .select('*')
-        .eq('restaurant_id', restId)
-        .order('name');
-      if (Array.isArray(tablesData)) {
-        setTables(tablesData);
-        if (tablesData.length > 0) setSelectedTable(tablesData[0]);
-      }
-
-      // 3. Fetch Categories
-      const { data: catData } = await supabase
-        .from('categories')
-        .select('*')
-        .eq('restaurant_id', restId)
-        .order('display_order');
-      if (Array.isArray(catData)) setCategories(catData);
-
-      // 4. Fetch Available Menu Items
-      const { data: menuData } = await supabase
-        .from('menu_items')
-        .select('*')
-        .eq('restaurant_id', restId)
-        .eq('is_available', true)
-        .order('name');
-      if (Array.isArray(menuData)) setMenuItems(menuData);
-
-    } catch (err) {
-      console.log('Error initializing Punch POS:', err);
+      const [{ data: t }, { data: c }, { data: m }] = await Promise.all([
+        supabase.from('tables').select('*').eq('restaurant_id', restaurantId).order('name'),
+        supabase.from('categories').select('*').eq('restaurant_id', restaurantId).order('sort_order'),
+        supabase.from('menu_items').select('*').eq('restaurant_id', restaurantId).eq('is_available', true).order('name'),
+      ]);
+      const tableList = t || [];
+      setTables(tableList);
+      setCategories(c || []);
+      setMenuItems(m || []);
+      if (tableList.length > 0) setSelectedTable(tableList[0]);
+    } catch (e) {
+      console.log('WaiterPunch load error:', e?.message);
     } finally {
       setLoading(false);
     }
-  };
+  }, [restaurantId]);
 
-  const handleAddToCart = (item) => {
-    const existingIndex = cart.findIndex(c => c.menuItem.id === item.id);
-    if (existingIndex > -1) {
-      const updated = [...cart];
-      updated[existingIndex].quantity += 1;
-      setCart(updated);
-    } else {
-      setCart([...cart, { menuItem: item, quantity: 1 }]);
-    }
-  };
+  function addToCart(item) {
+    setCart(prev => {
+      const existing = prev.find(c => c.id === item.id);
+      if (existing) return prev.map(c => c.id === item.id ? { ...c, quantity: c.quantity + 1 } : c);
+      return [...prev, { ...item, quantity: 1, notes: '' }];
+    });
+  }
 
-  const handleUpdateQuantity = (menuItemId, delta) => {
-    const updated = cart.map(item => {
-      if (item.menuItem.id === menuItemId) {
-        const newQty = item.quantity + delta;
-        return newQty > 0 ? { ...item, quantity: newQty } : null;
-      }
-      return item;
-    }).filter(Boolean);
-    setCart(updated);
-  };
+  function removeFromCart(itemId) {
+    setCart(prev => {
+      const existing = prev.find(c => c.id === itemId);
+      if (existing?.quantity === 1) return prev.filter(c => c.id !== itemId);
+      return prev.map(c => c.id === itemId ? { ...c, quantity: c.quantity - 1 } : c);
+    });
+  }
 
-  const calculateSubtotal = () => {
-    return cart.reduce((sum, c) => sum + (c.menuItem.price * c.quantity), 0);
-  };
+  function getQuantity(itemId) {
+    return cart.find(c => c.id === itemId)?.quantity || 0;
+  }
 
-  const calculateGST = (subtotal) => {
-    if (!restaurant?.gst_enabled) return 0;
-    const rate = Number(restaurant?.gst_percentage) || 5;
-    return (subtotal * rate) / 100;
-  };
+  const cartTotal = cart.reduce((s, i) => s + i.price * i.quantity, 0);
+  const cartCount = cart.reduce((s, i) => s + i.quantity, 0);
 
-  const subtotal = calculateSubtotal();
-  const gst = calculateGST(subtotal);
-  const grandTotal = subtotal + gst;
+  const filteredItems = menuItems.filter(item => {
+    const matchCat = selectedCategory === 'all' || item.category_id === selectedCategory;
+    const matchSearch = !search || item.name.toLowerCase().includes(search.toLowerCase());
+    return matchCat && matchSearch;
+  });
 
-  const handleSubmitOrder = async () => {
-    if (cart.length === 0) {
-      Alert.alert('Cart Empty', 'Please select at least 1 item to punch order.');
-      return;
-    }
-
-    if (orderType === 'dine_in' && !selectedTable) {
-      Alert.alert('Select Table', 'Please select a table for Dine-in order.');
-      return;
-    }
-
+  async function submitOrder() {
+    if (cart.length === 0) { Alert.alert('Empty Cart', 'Please add at least one item'); return; }
+    if (orderType === 'dine_in' && !selectedTable) { Alert.alert('Select Table', 'Please select a table'); return; }
     setSubmitting(true);
+
+    const tableNameStr = orderType === 'dine_in'
+      ? (selectedTable?.name || `Table ${selectedTable?.table_number || selectedTable?.id}`)
+      : 'Takeaway';
+
     try {
-      const orderPayload = {
+      // 1. Create the order
+      const orderData = {
         restaurant_id: restaurantId,
-        table_id: orderType === 'dine_in' ? selectedTable?.id : null,
-        table_name: orderType === 'dine_in' ? selectedTable?.name : 'Takeaway',
         order_type: orderType,
         status: 'new',
         payment_status: markPaid ? 'paid' : 'pending',
-        payment_method: markPaid ? paymentMethod : null,
-        subtotal: Number(subtotal.toFixed(2)),
-        gst: Number(gst.toFixed(2)),
-        total: Number(grandTotal.toFixed(2)),
+        table_name: tableNameStr,
+        table_id: orderType === 'dine_in' ? selectedTable?.id : null,
+        total: cartTotal,
+        special_instructions: notes,
+        created_by: profile.id,
       };
 
-      const { data: createdOrder, error: orderError } = await supabase
-        .from('orders')
-        .insert(orderPayload)
-        .select()
-        .single();
+      const { data: order, error: orderErr } = await supabase
+        .from('orders').insert(orderData).select().single();
+      if (orderErr) throw orderErr;
 
-      if (orderError) throw orderError;
-
-      // Create Batch #1 for the order
-      const { data: createdBatch } = await supabase
-        .from('order_batches')
-        .insert({
-          order_id: createdOrder.id,
-          batch_number: 1,
-          status: 'new'
-        })
-        .select()
-        .single();
-
-      // Insert Items
-      const itemsPayload = cart.map(c => ({
-        order_id: createdOrder.id,
-        batch_id: createdBatch?.id,
-        menu_item_id: c.menuItem.id,
-        menu_item_name: c.menuItem.name,
-        quantity: c.quantity,
-        price: c.menuItem.price,
+      // 2. Create order items
+      const itemsData = cart.map(item => ({
+        order_id: order.id,
+        item_id: item.id,
+        name: item.name,
+        quantity: item.quantity,
+        price: item.price,
+        notes: item.notes || '',
       }));
+      const { error: itemsErr } = await supabase.from('order_items').insert(itemsData);
+      if (itemsErr) console.log('order_items insert warning:', itemsErr.message);
 
-      const { error: itemsError } = await supabase
-        .from('order_items')
-        .insert(itemsPayload);
+      // 3. Create kitchen batch for real-time kitchen display
+      const batchData = {
+        order_id: order.id,
+        restaurant_id: restaurantId,
+        table_id: orderType === 'dine_in' ? selectedTable?.id : null,
+        status: 'new',
+        items: cart.map(item => ({
+          id: item.id,
+          name: item.name,
+          item_name: item.name,
+          quantity: item.quantity,
+          price: item.price,
+          is_veg: item.is_veg !== false,
+          notes: item.notes || '',
+        })),
+      };
 
-      if (itemsError) throw itemsError;
+      const { error: batchErr } = await supabase.from('order_batches').insert(batchData);
+      if (batchErr) console.log('order_batches insert warning:', batchErr.message);
 
-      sendPushToRestaurantStaff(
-        restaurantId,
-        'NEW STAFF ORDER PUNCHED',
-        `Table ${orderPayload.table_name} - Total: ₹${grandTotal.toFixed(2)}`,
-        { orderId: createdOrder.id }
-      ).catch(() => {});
-
-      Alert.alert(
-        'Order Placed Successfully',
-        `Order #${createdOrder.id.slice(0, 8)} sent to Kitchen KDS.`,
-        [{ text: 'OK', onPress: () => setCart([]) }]
-      );
-
-    } catch (err) {
-      Alert.alert('Punch Failed', err.message || 'Failed to place order.');
+      Alert.alert('Order Placed!', `Order for ${tableNameStr} submitted successfully`);
+      setCart([]);
+      setNotes('');
+      setMarkPaid(false);
+      setShowCart(false);
+    } catch (e) {
+      Alert.alert('Error', e.message || 'Failed to place order');
     } finally {
       setSubmitting(false);
     }
-  };
-
-  const safeMenuItems = menuItems || [];
-  const safeCategories = categories || [];
-  const safeTables = tables || [];
-
-  const filteredMenuItems = safeMenuItems.filter(item => {
-    if (!item) return false;
-    const matchesCategory = selectedCategoryId === 'all' || item.category_id === selectedCategoryId;
-    const matchesSearch = item.name?.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesCategory && matchesSearch;
-  });
-
-  if (loading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#0ea5e9" />
-        <Text style={styles.loadingText}>Loading menu catalog & tables...</Text>
-      </View>
-    );
   }
 
-  return (
-    <KeyboardAvoidingView 
-      style={styles.container} 
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.title}>Punch New Order (POS)</Text>
-        <Text style={styles.subtitle}>{restaurant?.name || 'SmartDine Staff POS'}</Text>
-      </View>
+  const renderMenuItem = ({ item }) => {
+    const qty = getQuantity(item.id);
 
-      {/* Top Options: Order Type & Table Selection */}
-      <View style={styles.topSection}>
-        <View style={styles.rowBetween}>
-          {/* Order Type Buttons */}
-          <View style={styles.orderTypeContainer}>
-            <TouchableOpacity 
-              style={[styles.typeBtn, orderType === 'dine_in' && styles.typeBtnActiveDine]} 
-              onPress={() => setOrderType('dine_in')}
-            >
-              <Text style={[styles.typeBtnText, orderType === 'dine_in' && styles.typeBtnTextActive]}>
-                Dine-in
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity 
-              style={[styles.typeBtn, orderType === 'takeaway' && styles.typeBtnActiveTakeaway]} 
-              onPress={() => setOrderType('takeaway')}
-            >
-              <Text style={[styles.typeBtnText, orderType === 'takeaway' && styles.typeBtnTextActive]}>
-                Takeaway
-              </Text>
-            </TouchableOpacity>
+    return (
+      <View style={styles.menuCard}>
+        <View style={styles.menuCardHeader}>
+          <View style={[styles.vegIndicator, { borderColor: item.is_veg === false ? '#ef4444' : '#22c55e' }]}>
+            <View style={[styles.vegIndicatorInner, { backgroundColor: item.is_veg === false ? '#ef4444' : '#22c55e' }]} />
           </View>
+          <Text style={styles.menuPrice}>{formatCurrency(item.price)}</Text>
         </View>
 
-        {/* Table Selector */}
-        {orderType === 'dine_in' && (
-          <View style={{ marginTop: 10 }}>
-            <Text style={styles.sectionLabel}>SELECT TABLE:</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 6 }}>
-              {safeTables.map(tbl => (
+        <Text style={styles.menuTitle} numberOfLines={2}>{item.name}</Text>
+
+        <View style={styles.menuCardFooter}>
+          {qty === 0 ? (
+            <TouchableOpacity
+              style={styles.addBtn}
+              onPress={() => addToCart(item)}
+            >
+              <Ionicons name="add" size={16} color={COLORS.primary} style={{ marginRight: 4 }} />
+              <Text style={styles.addBtnText}>Add</Text>
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.qtyStepper}>
+              <TouchableOpacity style={styles.stepperBtn} onPress={() => removeFromCart(item.id)}>
+                <Ionicons name="remove" size={16} color="#0f172a" />
+              </TouchableOpacity>
+              <Text style={styles.stepperQty}>{qty}</Text>
+              <TouchableOpacity style={styles.stepperBtn} onPress={() => addToCart(item)}>
+                <Ionicons name="add" size={16} color="#0f172a" />
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      </View>
+    );
+  };
+
+  return (
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+      {/* Header */}
+      <View style={styles.header}>
+        <Text style={styles.title}>Punch Order</Text>
+
+        {/* View Cart Button */}
+        <TouchableOpacity
+          style={styles.cartHeaderBtn}
+          onPress={() => setShowCart(true)}
+        >
+          <Ionicons name="cart-outline" size={20} color="#ffffff" />
+          {cartCount > 0 && (
+            <View style={styles.cartBadge}>
+              <Text style={styles.cartBadgeText}>{cartCount}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+      </View>
+
+      {/* Order Type Selector */}
+      <View style={styles.typeSelectorContainer}>
+        <TouchableOpacity
+          style={[styles.typeBtn, orderType === 'dine_in' && styles.typeBtnActive]}
+          onPress={() => setOrderType('dine_in')}
+        >
+          <Ionicons
+            name="restaurant-outline"
+            size={18}
+            color={orderType === 'dine_in' ? '#ffffff' : '#64748b'}
+            style={{ marginRight: 6 }}
+          />
+          <Text style={[styles.typeBtnText, orderType === 'dine_in' && styles.typeBtnTextActive]}>
+            Dine-In
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.typeBtn, orderType === 'takeaway' && styles.typeBtnActive]}
+          onPress={() => setOrderType('takeaway')}
+        >
+          <Ionicons
+            name="bag-handle-outline"
+            size={18}
+            color={orderType === 'takeaway' ? '#ffffff' : '#64748b'}
+            style={{ marginRight: 6 }}
+          />
+          <Text style={[styles.typeBtnText, orderType === 'takeaway' && styles.typeBtnTextActive]}>
+            Takeaway
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Table Selector Pills (Dine-In only) */}
+      {orderType === 'dine_in' && (
+        <View style={styles.tableSection}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.tableScrollContent}
+          >
+            {tables.map((t, idx) => {
+              const selected = selectedTable?.id === t.id;
+              const tableNameDisplay = t.name || t.table_number || `Table ${idx + 1}`;
+              return (
                 <TouchableOpacity
-                  key={tbl.id}
-                  style={[
-                    styles.tablePill,
-                    selectedTable?.id === tbl.id && styles.tablePillActive
-                  ]}
-                  onPress={() => setSelectedTable(tbl)}
+                  key={t.id || idx}
+                  style={[styles.tablePill, selected && styles.tablePillSelected]}
+                  onPress={() => setSelectedTable(t)}
                 >
-                  <Text style={[
-                    styles.tablePillText,
-                    selectedTable?.id === tbl.id && styles.tablePillTextActive
-                  ]}>
-                    {tbl.name}
+                  <Text style={[styles.tablePillText, selected && styles.tablePillTextSelected]}>
+                    {tableNameDisplay}
                   </Text>
                 </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* Search Input */}
+      <View style={styles.searchBox}>
+        <Ionicons name="search-outline" size={18} color="#94a3b8" style={{ marginRight: 8 }} />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search menu items..."
+          placeholderTextColor="#94a3b8"
+          value={search}
+          onChangeText={setSearch}
+        />
+        {search.length > 0 && (
+          <TouchableOpacity onPress={() => setSearch('')}>
+            <Ionicons name="close-circle" size={18} color="#94a3b8" />
+          </TouchableOpacity>
         )}
       </View>
 
-      {/* Category Pills & Search Bar */}
-      <View style={styles.menuFilterSection}>
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search food item..."
-          placeholderTextColor="#94a3b8"
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-        />
-
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
+      {/* Category Horizontal Chips */}
+      <View style={styles.categorySection}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ paddingHorizontal: 16 }}
+        >
           <TouchableOpacity
-            style={[styles.catPill, selectedCategoryId === 'all' && styles.catPillActive]}
-            onPress={() => setSelectedCategoryId('all')}
+            style={[styles.catChip, selectedCategory === 'all' && styles.catChipActive]}
+            onPress={() => setSelectedCategory('all')}
           >
-            <Text style={[styles.catPillText, selectedCategoryId === 'all' && styles.catPillTextActive]}>
+            <Text style={[styles.catChipText, selectedCategory === 'all' && styles.catChipTextActive]}>
               All Items
             </Text>
           </TouchableOpacity>
-          {safeCategories.map(cat => (
-            <TouchableOpacity
-              key={cat.id}
-              style={[styles.catPill, selectedCategoryId === cat.id && styles.catPillActive]}
-              onPress={() => setSelectedCategoryId(cat.id)}
-            >
-              <Text style={[styles.catPillText, selectedCategoryId === cat.id && styles.catPillTextActive]}>
-                {cat.name}
-              </Text>
-            </TouchableOpacity>
-          ))}
+
+          {categories.map(c => {
+            const active = selectedCategory === c.id;
+            return (
+              <TouchableOpacity
+                key={c.id}
+                style={[styles.catChip, active && styles.catChipActive]}
+                onPress={() => setSelectedCategory(c.id)}
+              >
+                <Text style={[styles.catChipText, active && styles.catChipTextActive]}>
+                  {c.name}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
         </ScrollView>
       </View>
 
-      {/* Main Grid: Menu Catalog */}
-      <FlatList
-        data={filteredMenuItems}
-        keyExtractor={(item) => item?.id || Math.random().toString()}
-        renderItem={({ item }) => {
-          if (!item) return null;
-          const cartItem = cart.find(c => c.menuItem.id === item.id);
-          const qty = cartItem ? cartItem.quantity : 0;
-
-          return (
-            <View style={styles.menuCard}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.menuItemName}>{item.name}</Text>
-                <Text style={styles.menuItemPrice}>₹{Number(item.price || 0).toFixed(2)}</Text>
-              </View>
-
-              {qty > 0 ? (
-                <View style={styles.qtyContainer}>
-                  <TouchableOpacity style={styles.qtyMinusBtn} onPress={() => handleUpdateQuantity(item.id, -1)}>
-                    <Text style={styles.qtyBtnText}>-</Text>
-                  </TouchableOpacity>
-                  <Text style={styles.qtyText}>{qty}</Text>
-                  <TouchableOpacity style={styles.qtyPlusBtn} onPress={() => handleUpdateQuantity(item.id, 1)}>
-                    <Text style={styles.qtyBtnText}>+</Text>
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                <TouchableOpacity style={styles.addBtn} onPress={() => handleAddToCart(item)}>
-                  <Text style={styles.addBtnText}>+ Add</Text>
-                </TouchableOpacity>
-              )}
+      {/* Menu Grid */}
+      {loading ? (
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color={COLORS.primary} />
+        </View>
+      ) : (
+        <FlatList
+          data={filteredItems}
+          keyExtractor={item => item.id}
+          numColumns={2}
+          renderItem={renderMenuItem}
+          contentContainerStyle={styles.menuGridContent}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Ionicons name="fast-food-outline" size={48} color="#cbd5e1" style={{ marginBottom: 12 }} />
+              <Text style={styles.emptyText}>No menu items found</Text>
             </View>
-          );
-        }}
-        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 16 }}
-        ListEmptyComponent={
-          <Text style={styles.emptyText}>No available menu items found.</Text>
-        }
-      />
+          }
+        />
+      )}
 
-      {/* Cart Summary Drawer */}
-      {cart.length > 0 && (
-        <View style={styles.cartFooter}>
-          <ScrollView style={styles.cartItemsScroll}>
-            {cart.map(c => (
-              <View key={c.menuItem.id} style={styles.cartRow}>
-                <Text style={styles.cartQty}>{c.quantity}x</Text>
-                <Text style={styles.cartItemName}>{c.menuItem.name}</Text>
-                <Text style={styles.cartItemPrice}>₹{(c.menuItem.price * c.quantity).toFixed(2)}</Text>
-              </View>
-            ))}
-          </ScrollView>
-
-          <View style={styles.totalRow}>
-            <Text style={styles.totalLabel}>
-              Total ({cart.reduce((s, c) => s + c.quantity, 0)} items):
-            </Text>
-            <Text style={styles.totalValue}>₹{grandTotal.toFixed(2)}</Text>
+      {/* Sticky Bottom Cart Bar */}
+      {cartCount > 0 && (
+        <View style={styles.bottomCartBar}>
+          <View>
+            <Text style={styles.cartBarItemsCount}>{cartCount} items selected</Text>
+            <Text style={styles.cartBarTotal}>{formatCurrency(cartTotal)}</Text>
           </View>
 
-          {/* Quick Mark Paid Toggle */}
-          <TouchableOpacity 
-            style={[styles.paidToggle, markPaid && styles.paidToggleActive]}
-            onPress={() => setMarkPaid(!markPaid)}
+          <TouchableOpacity
+            style={styles.cartBarBtn}
+            onPress={() => setShowCart(true)}
           >
-            <Text style={[styles.paidToggleText, markPaid && { color: '#10b981' }]}>
-              {markPaid ? 'Marking as PAID (Cash/UPI)' : 'Mark Paid Immediately?'}
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={[styles.punchSubmitBtn, submitting && { opacity: 0.6 }]}
-            onPress={handleSubmitOrder}
-            disabled={submitting}
-          >
-            {submitting ? (
-              <ActivityIndicator color="white" />
-            ) : (
-              <Text style={styles.punchSubmitText}>
-                Punch Order to Kitchen (₹{grandTotal.toFixed(2)})
-              </Text>
-            )}
+            <Text style={styles.cartBarBtnText}>Review Cart</Text>
+            <Ionicons name="arrow-forward" size={18} color="#ffffff" style={{ marginLeft: 6 }} />
           </TouchableOpacity>
         </View>
       )}
-    </KeyboardAvoidingView>
+
+      {/* Cart Modal */}
+      <Modal
+        visible={showCart}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowCart(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlay}
+        >
+          <View style={styles.modalContent}>
+            {/* Modal Header */}
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Order Summary</Text>
+              <TouchableOpacity onPress={() => setShowCart(false)}>
+                <Ionicons name="close" size={24} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Target Info */}
+            <View style={styles.targetInfoBanner}>
+              <Ionicons
+                name={orderType === 'dine_in' ? 'restaurant-outline' : 'bag-handle-outline'}
+                size={18}
+                color={COLORS.primary}
+                style={{ marginRight: 8 }}
+              />
+              <Text style={styles.targetInfoText}>
+                {orderType === 'dine_in'
+                  ? (selectedTable?.name || `Table ${selectedTable?.table_number || selectedTable?.id || '1'}`)
+                  : 'Takeaway Order'}
+              </Text>
+            </View>
+
+            {/* Cart Items List */}
+            <ScrollView style={{ maxHeight: 250, marginVertical: 12 }}>
+              {cart.map(item => (
+                <View key={item.id} style={styles.cartItemRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.cartItemTitle}>{item.name}</Text>
+                    <Text style={styles.cartItemSubtotal}>{formatCurrency(item.price * item.quantity)}</Text>
+                  </View>
+
+                  <View style={styles.qtyStepper}>
+                    <TouchableOpacity style={styles.stepperBtn} onPress={() => removeFromCart(item.id)}>
+                      <Ionicons name="remove" size={16} color="#0f172a" />
+                    </TouchableOpacity>
+                    <Text style={styles.stepperQty}>{item.quantity}</Text>
+                    <TouchableOpacity style={styles.stepperBtn} onPress={() => addToCart(item)}>
+                      <Ionicons name="add" size={16} color="#0f172a" />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))}
+            </ScrollView>
+
+            {/* Special Notes Input */}
+            <TextInput
+              style={styles.notesInput}
+              placeholder="Special instructions (e.g. less spicy)..."
+              placeholderTextColor="#94a3b8"
+              value={notes}
+              onChangeText={setNotes}
+            />
+
+            {/* Mark as Paid Checkbox */}
+            <TouchableOpacity
+              style={styles.paidCheckboxRow}
+              onPress={() => setMarkPaid(!markPaid)}
+            >
+              <Ionicons
+                name={markPaid ? 'checkbox' : 'square-outline'}
+                size={22}
+                color={markPaid ? COLORS.primary : '#94a3b8'}
+                style={{ marginRight: 10 }}
+              />
+              <Text style={styles.paidCheckboxText}>Mark as Paid (Cash)</Text>
+            </TouchableOpacity>
+
+            {/* Total Row & Submit Button */}
+            <View style={styles.cartModalFooter}>
+              <View>
+                <Text style={{ fontSize: 12, color: '#64748b' }}>Total</Text>
+                <Text style={styles.modalTotalText}>{formatCurrency(cartTotal)}</Text>
+              </View>
+
+              <TouchableOpacity
+                style={styles.submitBtn}
+                disabled={submitting}
+                onPress={submitOrder}
+              >
+                {submitting ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <>
+                    <Ionicons name="checkmark-circle-outline" size={20} color="#fff" style={{ marginRight: 6 }} />
+                    <Text style={styles.submitBtnText}>Place Order</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f8fafc',
-    paddingTop: 45,
-  },
-  loadingContainer: {
-    flex: 1,
-    backgroundColor: '#f8fafc',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: { color: '#64748b', marginTop: 12, fontSize: 14 },
+  container: { flex: 1, backgroundColor: '#f8fafc' },
   header: {
+    flexDirection: 'row',
+    justify: 'space-between',
+    alignItems: 'center',
     paddingHorizontal: 16,
+    paddingTop: 12,
     paddingBottom: 10,
+    backgroundColor: '#ffffff',
     borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
-    backgroundColor: '#ffffff',
+    borderBottomColor: '#f1f5f9',
   },
-  title: { fontSize: 20, fontWeight: 'bold', color: '#0f172a' },
-  subtitle: { fontSize: 12, color: '#64748b' },
-  topSection: {
-    backgroundColor: '#ffffff',
-    padding: 12,
-    marginHorizontal: 16,
-    marginTop: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
+  title: { fontSize: 24, fontWeight: '700', color: '#0f172a' },
+  cartHeaderBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: COLORS.primary,
+    alignItems: 'center',
+    justify: 'center',
   },
-  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  orderTypeContainer: { flexDirection: 'row', gap: 8, flex: 1 },
+  cartBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    backgroundColor: '#ef4444',
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justify: 'center',
+  },
+  cartBadgeText: { color: '#ffffff', fontSize: 11, fontWeight: '700' },
+  typeSelectorContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
   typeBtn: {
     flex: 1,
-    backgroundColor: '#f1f5f9',
-    paddingVertical: 8,
-    borderRadius: 8,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-  },
-  typeBtnActiveDine: { backgroundColor: '#10b981', borderColor: '#10b981' },
-  typeBtnActiveTakeaway: { backgroundColor: '#8b5cf6', borderColor: '#8b5cf6' },
-  typeBtnText: { color: '#64748b', fontSize: 13, fontWeight: 'bold' },
-  typeBtnTextActive: { color: 'white' },
-  sectionLabel: { color: '#64748b', fontSize: 10, fontWeight: 'bold' },
-  tablePill: {
-    backgroundColor: '#f8fafc',
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    marginRight: 8,
-  },
-  tablePillActive: { backgroundColor: '#059669', borderColor: '#059669' },
-  tablePillText: { color: '#64748b', fontSize: 12, fontWeight: 'bold' },
-  tablePillTextActive: { color: 'white' },
-  menuFilterSection: { paddingHorizontal: 16, marginVertical: 10 },
-  searchInput: {
-    backgroundColor: '#ffffff',
-    color: '#0f172a',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    fontSize: 13,
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-  },
-  catPill: {
-    backgroundColor: '#ffffff',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    marginRight: 6,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-  },
-  catPillActive: { backgroundColor: '#059669', borderColor: '#059669' },
-  catPillText: { color: '#64748b', fontSize: 11, fontWeight: 'bold' },
-  catPillTextActive: { color: 'white' },
-  menuCard: {
-    backgroundColor: '#ffffff',
-    padding: 12,
-    borderRadius: 10,
-    marginBottom: 8,
+    paddingVertical: 10,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justify: 'center',
+    borderRadius: 10,
+    backgroundColor: '#f1f5f9',
+    marginHorizontal: 4,
+  },
+  typeBtnActive: { backgroundColor: COLORS.primary },
+  typeBtnText: { fontSize: 14, fontWeight: '600', color: '#64748b' },
+  typeBtnTextActive: { color: '#ffffff', fontWeight: '700' },
+  tableSection: {
+    backgroundColor: '#ffffff',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  tableScrollContent: { paddingHorizontal: 16, alignItems: 'center' },
+  tablePill: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: '#f1f5f9',
+    marginRight: 8,
     borderWidth: 1,
     borderColor: '#e2e8f0',
   },
-  menuItemName: { color: '#0f172a', fontSize: 14, fontWeight: 'bold' },
-  menuItemPrice: { color: '#10b981', fontSize: 12, fontWeight: 'bold', marginTop: 2 },
-  addBtn: { backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#10b981', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 6 },
-  addBtnText: { color: '#10b981', fontWeight: 'bold', fontSize: 12 },
-  qtyContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#f1f5f9', borderRadius: 6, padding: 2 },
-  qtyMinusBtn: { backgroundColor: '#e2e8f0', width: 26, height: 26, borderRadius: 4, justifyContent: 'center', alignItems: 'center' },
-  qtyPlusBtn: { backgroundColor: '#10b981', width: 26, height: 26, borderRadius: 4, justifyContent: 'center', alignItems: 'center' },
-  qtyBtnText: { color: '#0f172a', fontWeight: 'bold', fontSize: 14 },
-  qtyText: { color: '#0f172a', fontWeight: 'bold', fontSize: 13, paddingHorizontal: 8 },
-  emptyText: { color: '#64748b', textAlign: 'center', marginTop: 40, fontSize: 13 },
-  cartFooter: {
+  tablePillSelected: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  tablePillText: { fontSize: 13, fontWeight: '700', color: '#0f172a' },
+  tablePillTextSelected: { color: '#ffffff' },
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#ffffff',
-    borderTopWidth: 2,
-    borderTopColor: '#059669',
-    padding: 14,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: -3 },
-    shadowOpacity: 0.1,
-    shadowRadius: 6,
-    elevation: 8,
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 8,
+    paddingHorizontal: 12,
+    height: 44,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
-  cartItemsScroll: { maxHeight: 80, marginBottom: 8 },
-  cartRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
-  cartQty: { color: '#059669', fontWeight: 'bold', fontSize: 12, width: 24 },
-  cartItemName: { color: '#0f172a', fontSize: 12, flex: 1 },
-  cartItemPrice: { color: '#64748b', fontSize: 12, fontWeight: 'bold' },
-  totalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#e2e8f0', paddingTop: 6, marginBottom: 8 },
-  totalLabel: { color: '#0f172a', fontSize: 13, fontWeight: 'bold' },
-  totalValue: { color: '#10b981', fontSize: 18, fontWeight: 'bold' },
-  paidToggle: { backgroundColor: '#f8fafc', padding: 8, borderRadius: 6, alignItems: 'center', marginBottom: 8, borderWidth: 1, borderColor: '#cbd5e1' },
-  paidToggleActive: { borderColor: '#10b981', backgroundColor: '#f0fdf4' },
-  paidToggleText: { color: '#059669', fontSize: 11, fontWeight: 'bold' },
-  punchSubmitBtn: { backgroundColor: '#059669', padding: 12, borderRadius: 10, alignItems: 'center' },
-  punchSubmitText: { color: 'white', fontSize: 14, fontWeight: 'bold' },
+  searchInput: { flex: 1, fontSize: 14, color: '#0f172a' },
+  categorySection: { height: 40, marginBottom: 8 },
+  catChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: '#ffffff',
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  catChipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  catChipText: { fontSize: 12, fontWeight: '600', color: '#64748b' },
+  catChipTextActive: { color: '#ffffff', fontWeight: '700' },
+  menuGridContent: { paddingHorizontal: 12, paddingBottom: 90 },
+  menuCard: {
+    flex: 1,
+    margin: 4,
+    backgroundColor: '#ffffff',
+    borderRadius: 14,
+    padding: 12,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
+  },
+  menuCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  vegIndicator: { width: 14, height: 14, borderRadius: 2, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  vegIndicatorInner: { width: 6, height: 6, borderRadius: 3 },
+  menuPrice: { fontSize: 15, fontWeight: '700', color: COLORS.primary },
+  menuTitle: { fontSize: 14, fontWeight: '600', color: '#0f172a', height: 38, marginBottom: 8 },
+  menuCardFooter: { flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center' },
+  addBtn: {
+    backgroundColor: COLORS.primaryLight,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  addBtnText: { color: COLORS.primary, fontWeight: '700', fontSize: 13 },
+  qtyStepper: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#f1f5f9', borderRadius: 8, paddingHorizontal: 4 },
+  stepperBtn: { padding: 6 },
+  stepperQty: { fontSize: 14, fontWeight: '700', color: '#0f172a', paddingHorizontal: 8 },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  emptyContainer: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60 },
+  emptyText: { fontSize: 14, color: '#94a3b8', fontWeight: '600' },
+  bottomCartBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#0f172a',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    justify: 'space-between',
+    alignItems: 'center',
+    elevation: 10,
+  },
+  cartBarItemsCount: { color: '#94a3b8', fontSize: 12 },
+  cartBarTotal: { color: '#ffffff', fontSize: 18, fontWeight: '700' },
+  cartBarBtn: { backgroundColor: COLORS.primary, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10, flexDirection: 'row', alignItems: 'center' },
+  cartBarBtnText: { color: '#ffffff', fontWeight: '700', fontSize: 14 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.5)', justifyContent: 'flex-end' },
+  modalContent: { backgroundColor: '#ffffff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  modalTitle: { fontSize: 20, fontWeight: '700', color: '#0f172a' },
+  targetInfoBanner: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.primaryLight, padding: 10, borderRadius: 8 },
+  targetInfoText: { fontSize: 14, fontWeight: '700', color: COLORS.primary },
+  cartItemRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  cartItemTitle: { fontSize: 14, fontWeight: '600', color: '#1e293b' },
+  cartItemSubtotal: { fontSize: 13, fontWeight: '700', color: COLORS.primary, marginTop: 2 },
+  notesInput: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 10, fontSize: 13, color: '#0f172a', marginVertical: 8 },
+  paidCheckboxRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 8 },
+  paidCheckboxText: { fontSize: 14, fontWeight: '600', color: '#334155' },
+  cartModalFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 12, borderTopWidth: 1, borderTopColor: '#f1f5f9', marginTop: 8 },
+  modalTotalText: { fontSize: 20, fontWeight: '700', color: COLORS.primary },
+  submitBtn: { backgroundColor: COLORS.primary, paddingHorizontal: 20, paddingVertical: 12, borderRadius: 12, flexDirection: 'row', alignItems: 'center' },
+  submitBtnText: { color: '#ffffff', fontWeight: '700', fontSize: 15 },
 });

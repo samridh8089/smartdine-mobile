@@ -1,567 +1,315 @@
-import React, { useEffect, useState } from 'react';
-import { 
-  View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, Modal, TextInput, ScrollView, ActivityIndicator 
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  View, Text, StyleSheet, FlatList, TouchableOpacity,
+  ActivityIndicator, RefreshControl, Modal, TextInput, Alert,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
+import { COLORS, FONTS, RADIUS, SHADOWS, formatCurrency } from '../lib/theme';
 
-export default function SuperAdminScreen() {
+export default function SuperAdminScreen({ navigation, route }) {
+  const profile = route?.params?.profile ?? {};
+
   const [restaurants, setRestaurants] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [systemStats, setSystemStats] = useState({ totalRevenue: 0, totalOrders: 0 });
-
-  // Modal States
+  const [refreshing, setRefreshing] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
-  const [editingItem, setEditingItem] = useState(null);
+  const [editingRest, setEditingRest] = useState(null);
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
-  const [plan, setPlan] = useState('starter');
-  const [submitting, setSubmitting] = useState(false);
+  const [plan, setPlan] = useState('PRO');
+  const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    fetchRestaurantsAndStats();
-
-    let channel;
+  const fetchRestaurants = useCallback(async () => {
     try {
-      channel = supabase
-        .channel('super-admin-realtime')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'restaurants' }, () => fetchRestaurantsAndStats())
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => fetchRestaurantsAndStats())
-        .subscribe();
+      const [{ data: restData }, { data: ordersData }] = await Promise.all([
+        supabase.from('restaurants').select('*').order('created_at', { ascending: false }),
+        supabase.from('orders').select('restaurant_id, total, status'),
+      ]);
+
+      const restList = restData || [];
+      const ordersList = ordersData || [];
+
+      const statsMap = {};
+      ordersList.forEach(o => {
+        if (!statsMap[o.restaurant_id]) {
+          statsMap[o.restaurant_id] = { count: 0, revenue: 0 };
+        }
+        statsMap[o.restaurant_id].count += 1;
+        if (o.status !== 'cancelled') {
+          statsMap[o.restaurant_id].revenue += o.total || 0;
+        }
+      });
+
+      const combined = restList.map(r => ({
+        ...r,
+        orderCount: statsMap[r.id]?.count || 0,
+        revenue: statsMap[r.id]?.revenue || 0,
+      }));
+
+      setRestaurants(combined);
     } catch (e) {
-      console.log('SuperAdmin channel error:', e);
-    }
-
-    return () => {
-      if (channel) {
-        try { supabase.removeChannel(channel); } catch (_) {}
-      }
-    };
-  }, []);
-
-  const fetchRestaurantsAndStats = async () => {
-    try {
-      const { data: restData, error: restErr } = await supabase
-        .from('restaurants')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (restErr) throw restErr;
-
-      const { data: ordersData } = await supabase
-        .from('orders')
-        .select('id, restaurant_id, total, status');
-
-      const restWithStats = (restData || []).map((rest) => {
-        const restOrders = (ordersData || []).filter(o => o.restaurant_id === rest.id);
-        const restRev = restOrders
-          .filter(o => o.status !== 'cancelled')
-          .reduce((sum, o) => sum + (Number(o.total) || 0), 0);
-        return {
-          ...rest,
-          orderCount: restOrders.length,
-          revenue: restRev,
-        };
-      });
-
-      const totalRev = (ordersData || [])
-        .filter(o => o.status !== 'cancelled')
-        .reduce((sum, o) => sum + (Number(o.total) || 0), 0);
-
-      setRestaurants(restWithStats);
-      setSystemStats({
-        totalRevenue: totalRev,
-        totalOrders: (ordersData || []).length,
-      });
-
-    } catch (err) {
-      console.log('Error fetching super admin stats:', err);
+      console.log('SuperAdmin fetch error:', e?.message);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
+  }, []);
 
-  const openCreateModal = () => {
-    setEditingItem(null);
+  useEffect(() => {
+    fetchRestaurants();
+  }, [fetchRestaurants]);
+
+  function openCreateModal() {
+    setEditingRest(null);
     setName('');
     setSlug('');
-    setPlan('starter');
+    setPlan('PRO');
     setModalVisible(true);
-  };
+  }
 
-  const openEditModal = (item) => {
-    setEditingItem(item);
-    setName(item.name || '');
-    setSlug(item.slug || '');
-    setPlan(item.plan || 'starter');
+  function openEditModal(rest) {
+    setEditingRest(rest);
+    setName(rest.name || '');
+    setSlug(rest.slug || '');
+    setPlan(rest.subscription_plan || 'PRO');
     setModalVisible(true);
-  };
+  }
 
-  const handleSaveRestaurant = async () => {
-    if (!name || !slug) {
-      Alert.alert('Error', 'Please fill in Name and Slug');
-      return;
-    }
-
-    setSubmitting(true);
+  async function handleSave() {
+    if (!name.trim()) { Alert.alert('Error', 'Restaurant name is required'); return; }
+    setSaving(true);
     try {
-      if (editingItem) {
-        const { error } = await supabase
+      if (editingRest) {
+        await supabase
           .from('restaurants')
-          .update({ name, slug, plan, updated_at: new Date().toISOString() })
-          .eq('id', editingItem.id);
-        if (error) throw error;
+          .update({ name, slug: slug.trim().toLowerCase(), subscription_plan: plan })
+          .eq('id', editingRest.id);
       } else {
-        const { error } = await supabase
+        await supabase
           .from('restaurants')
-          .insert({ name, slug, plan });
-        if (error) throw error;
+          .insert({ name, slug: slug.trim().toLowerCase() || name.toLowerCase().replace(/\s+/g, '-'), subscription_plan: plan });
       }
 
       setModalVisible(false);
-      fetchRestaurantsAndStats();
-    } catch (err) {
-      Alert.alert('Error', err.message);
+      await fetchRestaurants();
+    } catch (e) {
+      Alert.alert('Error', e.message || 'Save failed');
     } finally {
-      setSubmitting(false);
+      setSaving(false);
     }
-  };
+  }
 
-  const handleDeleteRestaurant = async (id, restName) => {
+  async function handleDelete(rest) {
     Alert.alert(
       'Delete Restaurant',
-      `Are you sure you want to delete ${restName}?`,
+      `Are you sure you want to delete "${rest.name}"? This action cannot be undone.`,
       [
         { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Delete', 
+        {
+          text: 'Delete',
           style: 'destructive',
           onPress: async () => {
             try {
-              const { error } = await supabase
-                .from('restaurants')
-                .delete()
-                .eq('id', id);
-              if (!error) fetchRestaurantsAndStats();
+              await supabase.from('restaurants').delete().eq('id', rest.id);
+              await fetchRestaurants();
             } catch (e) {
-              Alert.alert('Error', e.message);
+              Alert.alert('Error', 'Delete failed');
             }
-          }
-        }
+          },
+        },
       ]
     );
-  };
+  }
 
-  const handleSignOut = async () => {
+  async function handleSignOut() {
     await supabase.auth.signOut();
-  };
+    if (navigation?.replace) {
+      navigation.replace('Login');
+    }
+  }
 
-  const renderItem = ({ item }) => (
-    <View style={styles.card}>
-      <View style={styles.cardHeader}>
-        <Text style={styles.cardTitle}>{item.name}</Text>
-        <View style={styles.planBadge}>
-          <Text style={styles.planBadgeText}>{item.plan?.toUpperCase() || 'STARTER'}</Text>
-        </View>
-      </View>
-      <Text style={styles.cardSub}>
-        Slug: <Text style={styles.highlight}>{item.slug}</Text>
-      </Text>
-
-      <View style={styles.metricsRow}>
-        <View style={styles.metricBox}>
-          <Text style={styles.metricLabel}>Total Orders</Text>
-          <Text style={styles.metricValue}>{item.orderCount || 0}</Text>
-        </View>
-        <View style={styles.metricBox}>
-          <Text style={styles.metricLabel}>Revenue</Text>
-          <Text style={[styles.metricValue, { color: '#10b981' }]}>
-            ₹{(item.revenue || 0).toFixed(2)}
-          </Text>
-        </View>
-      </View>
-
-      <View style={styles.cardActions}>
-        <TouchableOpacity 
-          style={styles.editBtn} 
-          onPress={() => openEditModal(item)}
-        >
-          <Text style={styles.editBtnText}>Edit</Text>
-        </TouchableOpacity>
-        <TouchableOpacity 
-          style={styles.deleteBtn} 
-          onPress={() => handleDeleteRestaurant(item.id, item.name)}
-        >
-          <Text style={styles.deleteBtnText}>Delete</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
+  const totalSystemRevenue = restaurants.reduce((s, r) => s + r.revenue, 0);
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       {/* Header */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.title}>Super Admin Panel</Text>
-          <Text style={styles.subtitle}>Manage All Restaurants & System Stats</Text>
+          <Text style={styles.title}>Super Admin</Text>
+          <Text style={styles.subtitle}>System Overview & Restaurants</Text>
         </View>
-        <TouchableOpacity onPress={handleSignOut} style={styles.signOutBtn}>
+
+        <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut}>
+          <Ionicons name="log-out-outline" size={18} color="#ef4444" style={{ marginRight: 4 }} />
           <Text style={styles.signOutText}>Sign Out</Text>
         </TouchableOpacity>
       </View>
 
-      {/* System Overall Revenue Stats Banner */}
+      {/* Stats Banner */}
       <View style={styles.statsBanner}>
         <View style={styles.statCol}>
-          <Text style={styles.statColLabel}>TOTAL SYSTEM REVENUE</Text>
-          <Text style={styles.statColValue}>₹{systemStats.totalRevenue.toFixed(2)}</Text>
+          <Text style={styles.statLabel}>Total Restaurants</Text>
+          <Text style={styles.statValue}>{restaurants.length}</Text>
         </View>
+        <View style={styles.statDivider} />
         <View style={styles.statCol}>
-          <Text style={styles.statColLabel}>TOTAL RESTAURANTS</Text>
-          <Text style={styles.statColValue}>{restaurants.length}</Text>
+          <Text style={styles.statLabel}>System Revenue</Text>
+          <Text style={styles.statValue}>{formatCurrency(totalSystemRevenue)}</Text>
         </View>
       </View>
 
       {/* Create Button */}
-      <TouchableOpacity style={styles.addButton} onPress={openCreateModal}>
-        <Text style={styles.addButtonText}>+ Create New Restaurant</Text>
-      </TouchableOpacity>
+      <View style={styles.actionRow}>
+        <TouchableOpacity style={styles.createBtn} onPress={openCreateModal}>
+          <Ionicons name="add-circle-outline" size={18} color="#fff" style={{ marginRight: 6 }} />
+          <Text style={styles.createBtnText}>Add New Restaurant</Text>
+        </TouchableOpacity>
+      </View>
 
-      {/* Restaurant List */}
-      {loading ? (
-        <ActivityIndicator size="large" color="#0ea5e9" style={{ marginTop: 40 }} />
+      {/* Restaurants List */}
+      {loading && !refreshing ? (
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color={COLORS.primary} />
+        </View>
       ) : (
         <FlatList
           data={restaurants}
-          keyExtractor={(item) => item.id}
-          renderItem={renderItem}
-          contentContainerStyle={{ paddingBottom: 30 }}
-          refreshing={loading}
-          onRefresh={fetchRestaurantsAndStats}
+          keyExtractor={item => item.id}
+          contentContainerStyle={styles.listContent}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchRestaurants(); }} />
+          }
+          renderItem={({ item }) => (
+            <View style={styles.restCard}>
+              <View style={styles.cardHeader}>
+                <Text style={styles.restName}>{item.name}</Text>
+                <View style={styles.planBadge}>
+                  <Text style={styles.planBadgeText}>{item.subscription_plan || 'PRO'}</Text>
+                </View>
+              </View>
+
+              <Text style={styles.slugText}>Slug: {item.slug || 'n/a'}</Text>
+
+              <View style={styles.cardMetrics}>
+                <View style={styles.metricItem}>
+                  <Text style={styles.metricLabel}>Orders</Text>
+                  <Text style={styles.metricVal}>{item.orderCount}</Text>
+                </View>
+                <View style={styles.metricItem}>
+                  <Text style={styles.metricLabel}>Revenue</Text>
+                  <Text style={styles.metricVal}>{formatCurrency(item.revenue)}</Text>
+                </View>
+              </View>
+
+              <View style={styles.cardActions}>
+                <TouchableOpacity style={[styles.cardBtn, { backgroundColor: '#f1f5f9' }]} onPress={() => openEditModal(item)}>
+                  <Ionicons name="pencil" size={14} color="#475569" style={{ marginRight: 4 }} />
+                  <Text style={{ color: '#475569', fontWeight: '600', fontSize: 13 }}>Edit</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={[styles.cardBtn, { backgroundColor: '#fef2f2', marginLeft: 8 }]} onPress={() => handleDelete(item)}>
+                  <Ionicons name="trash-outline" size={14} color="#ef4444" style={{ marginRight: 4 }} />
+                  <Text style={{ color: '#ef4444', fontWeight: '600', fontSize: 13 }}>Delete</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
         />
       )}
 
       {/* Create / Edit Modal */}
-      <Modal visible={modalVisible} animationType="slide" transparent>
+      <Modal visible={modalVisible} animationType="fade" transparent onRequestClose={() => setModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>
-              {editingItem ? 'Edit Restaurant' : 'Create New Restaurant'}
-            </Text>
+            <Text style={styles.modalTitle}>{editingRest ? 'Edit Restaurant' : 'Create Restaurant'}</Text>
 
-            <Text style={styles.label}>Restaurant Name</Text>
+            <Text style={styles.inputLabel}>Restaurant Name</Text>
             <TextInput
               style={styles.input}
-              placeholder="e.g. A2Z Items"
+              placeholder="e.g. Urban Cafe"
               placeholderTextColor="#94a3b8"
               value={name}
               onChangeText={setName}
             />
 
-            <Text style={styles.label}>URL Slug</Text>
+            <Text style={styles.inputLabel}>Slug (URL identifier)</Text>
             <TextInput
               style={styles.input}
-              placeholder="e.g. a2z-items"
+              placeholder="e.g. urban-cafe"
               placeholderTextColor="#94a3b8"
               value={slug}
               onChangeText={setSlug}
-              autoCapitalize="none"
             />
 
-            <Text style={styles.label}>Subscription Plan</Text>
-            <View style={styles.planSelector}>
-              {['starter', 'pro', 'enterprise'].map((p) => (
+            <Text style={styles.inputLabel}>Subscription Plan</Text>
+            <View style={styles.planRow}>
+              {['STARTER', 'PRO', 'ENTERPRISE'].map(p => (
                 <TouchableOpacity
                   key={p}
-                  style={[styles.planOption, plan === p && styles.planOptionActive]}
+                  style={[styles.planBtn, plan === p && styles.planBtnActive]}
                   onPress={() => setPlan(p)}
                 >
-                  <Text style={[styles.planOptionText, plan === p && styles.planOptionTextActive]}>
-                    {p.toUpperCase()}
-                  </Text>
+                  <Text style={[styles.planBtnText, plan === p && styles.planBtnTextActive]}>{p}</Text>
                 </TouchableOpacity>
               ))}
             </View>
 
-            <View style={styles.modalButtons}>
-              <TouchableOpacity 
-                style={styles.cancelBtn} 
-                onPress={() => setModalVisible(false)}
-                disabled={submitting}
-              >
-                <Text style={styles.cancelBtnText}>Cancel</Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 20 }}>
+              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: '#f1f5f9' }]} onPress={() => setModalVisible(false)}>
+                <Text style={{ color: '#64748b', fontWeight: '600' }}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity 
-                style={styles.saveBtn} 
-                onPress={handleSaveRestaurant}
-                disabled={submitting}
-              >
-                {submitting ? (
-                  <ActivityIndicator color="white" />
-                ) : (
-                  <Text style={styles.saveBtnText}>{editingItem ? 'Save Changes' : 'Create'}</Text>
-                )}
+
+              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: COLORS.primary, marginLeft: 10 }]} disabled={saving} onPress={handleSave}>
+                {saving ? <ActivityIndicator size="small" color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '700' }}>Save</Text>}
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f8fafc',
-    padding: 16,
-    paddingTop: 50,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
-    backgroundColor: '#ffffff',
-    paddingHorizontal: 12,
-    borderRadius: 8,
-  },
-  title: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#059669',
-  },
-  subtitle: {
-    fontSize: 12,
-    color: '#64748b',
-  },
-  signOutBtn: {
-    backgroundColor: '#f1f5f9',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-  },
-  signOutText: {
-    color: '#ef4444',
-    fontWeight: 'bold',
-    fontSize: 13,
-  },
-  statsBanner: {
-    flexDirection: 'row',
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-  },
-  statCol: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  statColLabel: {
-    fontSize: 10,
-    fontWeight: 'bold',
-    color: '#64748b',
-    marginBottom: 4,
-  },
-  statColValue: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#10b981',
-  },
-  addButton: {
-    backgroundColor: '#059669',
-    padding: 14,
-    borderRadius: 10,
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  addButtonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  card: {
-    backgroundColor: '#ffffff',
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  cardTitle: {
-    color: '#0f172a',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  planBadge: {
-    backgroundColor: '#0284c7',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  planBadgeText: {
-    color: 'white',
-    fontSize: 10,
-    fontWeight: 'bold',
-  },
-  cardSub: {
-    color: '#64748b',
-    fontSize: 13,
-    marginBottom: 12,
-  },
-  highlight: {
-    color: '#0ea5e9',
-  },
-  metricsRow: {
-    flexDirection: 'row',
-    backgroundColor: '#f8fafc',
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#f1f5f9',
-  },
-  metricBox: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  metricLabel: {
-    color: '#64748b',
-    fontSize: 11,
-    fontWeight: 'bold',
-  },
-  metricValue: {
-    color: '#0f172a',
-    fontSize: 15,
-    fontWeight: 'bold',
-    marginTop: 2,
-  },
-  cardActions: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  editBtn: {
-    flex: 1,
-    backgroundColor: '#e2e8f0',
-    paddingVertical: 8,
-    borderRadius: 6,
-    alignItems: 'center',
-  },
-  editBtnText: {
-    color: '#0f172a',
-    fontWeight: 'bold',
-  },
-  deleteBtn: {
-    flex: 1,
-    backgroundColor: '#fef2f2',
-    borderWidth: 1,
-    borderColor: '#fca5a5',
-    paddingVertical: 8,
-    borderRadius: 6,
-    alignItems: 'center',
-  },
-  deleteBtnText: {
-    color: '#dc2626',
-    fontWeight: 'bold',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.4)',
-    justifyContent: 'center',
-    padding: 16,
-  },
-  modalContent: {
-    backgroundColor: '#ffffff',
-    padding: 20,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#0f172a',
-    marginBottom: 16,
-  },
-  label: {
-    color: '#0f172a',
-    fontSize: 13,
-    fontWeight: 'bold',
-    marginBottom: 6,
-    marginTop: 10,
-  },
-  input: {
-    backgroundColor: '#f8fafc',
-    color: '#0f172a',
-    padding: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-  },
-  planSelector: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 4,
-  },
-  planOption: {
-    flex: 1,
-    backgroundColor: '#f1f5f9',
-    paddingVertical: 8,
-    borderRadius: 8,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-  },
-  planOptionActive: {
-    backgroundColor: '#059669',
-    borderColor: '#059669',
-  },
-  planOptionText: {
-    color: '#64748b',
-    fontSize: 11,
-    fontWeight: 'bold',
-  },
-  planOptionTextActive: {
-    color: 'white',
-  },
-  modalButtons: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 20,
-  },
-  cancelBtn: {
-    flex: 1,
-    backgroundColor: '#e2e8f0',
-    padding: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  cancelBtnText: {
-    color: '#475569',
-    fontWeight: 'bold',
-  },
-  saveBtn: {
-    flex: 1,
-    backgroundColor: '#059669',
-    padding: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  saveBtnText: {
-    color: 'white',
-    fontWeight: 'bold',
-  },
+  container: { flex: 1, backgroundColor: '#f8fafc' },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingTop: 12, paddingBottom: 10, backgroundColor: '#ffffff', borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  title: { fontSize: 24, fontWeight: '700', color: '#0f172a' },
+  subtitle: { fontSize: 12, color: '#64748b', marginTop: 2 },
+  signOutBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fef2f2', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
+  signOutText: { color: '#ef4444', fontWeight: '700', fontSize: 12 },
+  statsBanner: { flexDirection: 'row', backgroundColor: COLORS.primary, marginHorizontal: 16, marginTop: 12, borderRadius: 14, padding: 16, alignItems: 'center' },
+  statCol: { flex: 1, alignItems: 'center' },
+  statDivider: { width: 1, height: 40, backgroundColor: 'rgba(255, 255, 255, 0.2)' },
+  statLabel: { color: '#ffffff', opacity: 0.8, fontSize: 12, marginBottom: 2 },
+  statValue: { color: '#ffffff', fontWeight: '700', fontSize: 20 },
+  actionRow: { paddingHorizontal: 16, marginTop: 12 },
+  createBtn: { backgroundColor: COLORS.primary, paddingVertical: 12, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
+  createBtnText: { color: '#ffffff', fontWeight: '700', fontSize: 14 },
+  listContent: { padding: 16 },
+  restCard: { backgroundColor: '#ffffff', borderRadius: 14, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: '#f1f5f9', elevation: 2 },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+  restName: { fontSize: 18, fontWeight: '700', color: '#0f172a' },
+  planBadge: { backgroundColor: COLORS.primaryLight, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
+  planBadgeText: { color: COLORS.primary, fontWeight: '700', fontSize: 11 },
+  slugText: { fontSize: 12, color: '#94a3b8', marginBottom: 12 },
+  cardMetrics: { flexDirection: 'row', backgroundColor: '#f8fafc', padding: 10, borderRadius: 8, marginBottom: 12 },
+  metricItem: { flex: 1, alignItems: 'center' },
+  metricLabel: { fontSize: 11, color: '#64748b' },
+  metricVal: { fontSize: 15, fontWeight: '700', color: '#0f172a', marginTop: 2 },
+  cardActions: { flexDirection: 'row', justifyContent: 'flex-end' },
+  cardBtn: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.5)', justifyContent: 'center', padding: 20 },
+  modalContent: { backgroundColor: '#ffffff', borderRadius: 16, padding: 20 },
+  modalTitle: { fontSize: 18, fontWeight: '700', color: '#0f172a', marginBottom: 16 },
+  inputLabel: { fontSize: 12, fontWeight: '600', color: '#334155', marginBottom: 4, marginTop: 8 },
+  input: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 10, fontSize: 14, color: '#0f172a' },
+  planRow: { flexDirection: 'row', marginTop: 6 },
+  planBtn: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 8, backgroundColor: '#f1f5f9', marginHorizontal: 2 },
+  planBtnActive: { backgroundColor: COLORS.primary },
+  planBtnText: { fontSize: 11, fontWeight: '600', color: '#64748b' },
+  planBtnTextActive: { color: '#ffffff', fontWeight: '700' },
+  modalBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10 },
 });

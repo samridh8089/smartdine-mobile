@@ -1,844 +1,802 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { 
-  View, Text, ScrollView, TouchableOpacity, Alert, StyleSheet, ActivityIndicator, Modal, TextInput 
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  View, Text, StyleSheet, ScrollView, TouchableOpacity,
+  ActivityIndicator, RefreshControl, Platform,
+  Alert, Modal, TextInput, Animated, Vibration, FlatList,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons, MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
-import { sendSystemAlert, registerPushToken } from '../lib/notifications';
-import { getFormattedOrderId } from '../lib/orderUtils';
-import { startAlarm, stopAlarm, isAlarmActive } from '../lib/alarmManager';
+import { startAlarm, stopAlarm, stopAllAlarms } from '../lib/alarmManager';
+import { sendLocalNotification } from '../lib/notifications';
+import {
+  COLORS, FONTS, RADIUS, SHADOWS, timeAgo, formatCurrency,
+} from '../lib/theme';
+import OTAUpdateBtn from '../components/OTAUpdateBtn';
 
-// Helper to consolidate items into NEW items to prepare vs PREVIOUSLY SERVED vs CANCELLED items
-function consolidateItems(itemList = [], orderStatus = '') {
-  try {
-    if (!Array.isArray(itemList) || itemList.length === 0) {
-      return { newItems: [], servedItems: [], cancelledItems: [] };
-    }
+const CANCEL_REASONS = [
+  'Item Out of Stock',
+  'Kitchen Busy / Overflow',
+  'Wrong Order Placed',
+  'Customer Request',
+  'Other',
+];
 
-    const newMap = new Map();
-    const servedMap = new Map();
-    const cancelledMap = new Map();
+const PENDING_QUEUE_STORAGE_KEY = '@smartdine_kitchen_pending_actions';
 
-    // 1. Find latest item creation timestamp to identify re-ordered batches
-    let latestTime = 0;
-    itemList.forEach(item => {
-      if (item?.created_at) {
-        const t = new Date(item.created_at).getTime();
-        if (!isNaN(t) && t > latestTime) latestTime = t;
-      }
-    });
+export default function KitchenScreen({ route }) {
+  const navigation = useNavigation();
+  const profile = route?.params?.profile ?? {};
+  const [restaurantId, setRestaurantId] = useState(
+    profile?.restaurant_id || profile?.restaurants?.id || null
+  );
 
-    // 2. Classify items
-    itemList.forEach(item => {
-      if (!item) return;
-      const name = String(item.menu_item_name || item.name || 'Item');
-      const qty = Number(item.quantity) || 1;
-      const price = Number(item.price) || 0;
-
-      const isItemCancelled = Boolean(item.is_cancelled || item.status === 'cancelled');
-
-      if (isItemCancelled) {
-        if (cancelledMap.has(name)) {
-          cancelledMap.get(name).quantity += qty;
-        } else {
-          cancelledMap.set(name, { name, quantity: qty, price, isCancelled: true });
+  useEffect(() => {
+    async function fetchMissingRestaurantId() {
+      if (!restaurantId) {
+        try {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (user) {
+            const { data: p } = await supabase
+              .from('profiles')
+              .select('restaurant_id')
+              .eq('id', user.id)
+              .maybeSingle();
+            if (p?.restaurant_id) {
+              setRestaurantId(p.restaurant_id);
+            }
+          }
+        } catch (e) {
+          console.log('KDS restaurant_id fetch error:', e?.message);
         }
+      }
+    }
+    fetchMissingRestaurantId();
+  }, [restaurantId]);
+
+  const [activeTab, setActiveTab] = useState('new'); // 'new' | 'preparing' | 'ready'
+  const [newOrders, setNewOrders] = useState([]);
+  const [preparingOrders, setPreparingOrders] = useState([]);
+  const [readyOrders, setReadyOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [bellOn, setBellOn] = useState(true);
+  const [actionLoading, setActionLoading] = useState({});
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [cancelTarget, setCancelTarget] = useState(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [hasNewOrder, setHasNewOrder] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
+  const [pendingQueue, setPendingQueue] = useState([]);
+  
+  const knownNewIds = useRef(new Set());
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  // Pulse animation for new order alert banner
+  useEffect(() => {
+    if (hasNewOrder) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 1.03, duration: 600, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
+        ])
+      ).start();
+    } else {
+      pulseAnim.setValue(1);
+    }
+  }, [hasNewOrder]);
+
+  // Load offline queue on init
+  useEffect(() => {
+    async function loadPendingQueue() {
+      try {
+        const stored = await AsyncStorage.getItem(PENDING_QUEUE_STORAGE_KEY);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setPendingQueue(parsed);
+          }
+        }
+      } catch (e) {
+        console.log('[KDS] Pending queue load error:', e?.message);
+      }
+    }
+    loadPendingQueue();
+  }, []);
+
+  // Save offline queue whenever it changes
+  const savePendingQueue = async (queue) => {
+    setPendingQueue(queue);
+    try {
+      await AsyncStorage.setItem(PENDING_QUEUE_STORAGE_KEY, JSON.stringify(queue));
+    } catch (e) {
+      console.log('[KDS] Save pending queue error:', e?.message);
+    }
+  };
+
+  const loadOrders = useCallback(async () => {
+    if (!restaurantId) {
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
+    try {
+      // order_batches does NOT have restaurant_id — filter via orders join & include order_items
+      const { data, error } = await supabase
+        .from('order_batches')
+        .select('*, order_items(*), orders!inner(table_name, order_type, payment_status, restaurant_id, status)')
+        .eq('orders.restaurant_id', restaurantId)
+        .not('status', 'in', '(served,completed,cancelled)')
+        .order('created_at', { ascending: true });
+
+      if (error) {
+        console.log('KDS fetch error:', error.message);
+        setIsOffline(true);
         return;
       }
 
-      const itemTime = item.created_at ? new Date(item.created_at).getTime() : 0;
-      const isOlderBatch = (latestTime > 0 && itemTime > 0 && (latestTime - itemTime > 3000));
-      const isItemServed = Boolean(item.is_served || item.is_prepared || item.status === 'served' || item.status === 'ready' || isOlderBatch);
+      setIsOffline(false);
 
-      if (isItemServed) {
-        if (servedMap.has(name)) {
-          servedMap.get(name).quantity += qty;
-        } else {
-          servedMap.set(name, { name, quantity: qty, price, isServed: true });
+      // Filter out batches whose parent order is already completed or cancelled
+      const rawBatches = data || [];
+      const batches = rawBatches.filter(b => b.orders && !['completed', 'cancelled'].includes(b.orders.status));
+      const newB = batches.filter(b => b.status === 'new' || b.status === 'pending');
+      const prepB = batches.filter(b => ['accepted', 'preparing'].includes(b.status));
+      const readyB = batches.filter(b => b.status === 'ready');
+
+      setNewOrders(newB);
+      setPreparingOrders(prepB);
+      setReadyOrders(readyB);
+
+      // Check for new orders to trigger bell
+      let hasNew = false;
+      newB.forEach(b => {
+        if (!knownNewIds.current.has(b.id)) {
+          knownNewIds.current.add(b.id);
+          hasNew = true;
         }
-      } else {
-        if (newMap.has(name)) {
-          newMap.get(name).quantity += qty;
-        } else {
-          newMap.set(name, { name, quantity: qty, price, isServed: false });
-        }
+      });
+      if (hasNew && bellOn) {
+        setHasNewOrder(true);
+        startAlarm('new_order', '🔔 New Kitchen Order!', 'A new order needs kitchen attention');
+        sendLocalNotification('🔔 New Kitchen Order!', 'A new order needs kitchen attention', 'smartdine-urgent-v3');
+        Vibration.vibrate([0, 1000, 500, 1000]);
       }
-    });
-
-    return {
-      newItems: Array.from(newMap.values()),
-      servedItems: Array.from(servedMap.values()),
-      cancelledItems: Array.from(cancelledMap.values()),
-    };
-  } catch (e) {
-    console.log('Error consolidating items:', e);
-    return { newItems: [], servedItems: [], cancelledItems: [] };
-  }
-}
-
-const PRESET_CANCEL_REASONS = [
-  'Item Out of Stock',
-  'Kitchen Busy / Overflow',
-  'Customer Cancelled',
-  'Kitchen Closed',
-  'Incorrect Order',
-];
-
-export default function KitchenScreen({ route }) {
-  const profile = route?.params?.profile || {};
-  const [restaurantId, setRestaurantId] = useState(profile?.restaurant_id || null);
-  const [restaurantName, setRestaurantName] = useState('Kitchen Display');
-  const [orders, setOrders] = useState([]);
-  const [activeTab, setActiveTab] = useState('active'); // 'active' | 'ready' | 'history' | 'all'
-  const [loading, setLoading] = useState(true);
-  const knownOrderIdsRef = useRef(new Set());
-
-  // Cancellation Modal state
-  const [cancelModalVisible, setCancelModalVisible] = useState(false);
-  const [cancellingOrderId, setCancellingOrderId] = useState(null);
-  const [cancellationReason, setCancellationReason] = useState('');
-
-  useEffect(() => {
-    let isMounted = true;
-
-    const initUserAndPush = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) {
-          registerPushToken(session.user.id).catch(() => {});
-
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('restaurant_id')
-            .eq('id', session.user.id)
-            .single();
-
-          if (profile?.restaurant_id && isMounted) {
-            setRestaurantId(profile.restaurant_id);
-          }
-        }
-      } catch (err) {
-        console.log('Error initializing kitchen session:', err);
-      }
-    };
-
-    initUserAndPush();
-    return () => { isMounted = false; };
-  }, []);
-
-  useEffect(() => {
-    if (profile?.id) {
-      registerPushToken(profile.id).catch(() => {});
-    }
-    fetchRestaurantInfo();
-    fetchOrders();
-
-    // 1. WebSocket Realtime Subscription
-    let channel;
-    try {
-      channel = supabase
-        .channel('kitchen-live-orders')
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'orders' },
-          (payload) => {
-            try {
-              if (payload?.new && payload.new.status === 'new') {
-                if (!restaurantId || payload.new.restaurant_id === restaurantId) {
-                  startAlarm(
-                    'new_order',
-                    'NEW KITCHEN ORDER',
-                    `Table ${payload.new.table_name || 'N/A'} - Total: ₹${payload.new.total || 0}`
-                  ).catch(() => {});
-                  sendSystemAlert(
-                    'NEW KITCHEN ORDER',
-                    `Table ${payload.new.table_name || 'N/A'} - Total: ₹${payload.new.total || 0}`
-                  ).catch(() => {});
-                }
-              }
-            } catch (_) {}
-            fetchOrders();
-          }
-        )
-        .subscribe();
-    } catch (e) {
-      console.log('Kitchen realtime error:', e);
-    }
-
-    // 2. High-Frequency 3-Second Polling
-    const interval = setInterval(() => {
-      fetchOrders(true);
-    }, 3000);
-
-    return () => {
-      if (channel) {
-        try { supabase.removeChannel(channel); } catch (_) {}
-      }
-      if (interval) clearInterval(interval);
-      try { stopAlarm(); } catch (_) {}
-    };
-  }, [restaurantId]);
-
-  // Auto-trigger continuous alarm whenever there is an unaccepted new order or batch
-  useEffect(() => {
-    if (!orders || orders.length === 0) {
-      stopAlarm();
-      return;
-    }
-
-    const hasNewOrder = orders.some(o => 
-      o.status === 'new' || (o.batches || []).some(b => b.status === 'new')
-    );
-
-    if (hasNewOrder) {
-      const firstNew = orders.find(o => o.status === 'new' || (o.batches || []).some(b => b.status === 'new'));
-      startAlarm(
-        'new_order',
-        'NEW KITCHEN ORDER',
-        `Table ${firstNew?.table_name || 'N/A'} - Total: ₹${firstNew?.total || 0}`
-      );
-    } else {
-      stopAlarm();
-    }
-  }, [orders]);
-
-  const fetchRestaurantInfo = async () => {
-    if (!restaurantId) return;
-    try {
-      const { data } = await supabase
-        .from('restaurants')
-        .select('name')
-        .eq('id', restaurantId)
-        .single();
-      if (data?.name) {
-        setRestaurantName(`${data.name} - Kitchen KDS`);
+      if (newB.length === 0) {
+        setHasNewOrder(false);
+        stopAlarm('new_order');
       }
     } catch (e) {
-      console.log('Error fetching restaurant info:', e);
-    }
-  };
-
-  const fetchOrders = async (isBackgroundPoll = false) => {
-    try {
-      let query = supabase
-        .from('orders')
-        .select('*, order_items(*)')
-        .order('created_at', { ascending: false });
-
-      if (restaurantId) {
-        query = query.eq('restaurant_id', restaurantId);
-      }
-
-      const { data, error } = await query;
-      if (!error && Array.isArray(data)) {
-        if (isBackgroundPoll) {
-          data.forEach(ord => {
-            if (ord?.id && !knownOrderIdsRef.current.has(ord.id)) {
-              knownOrderIdsRef.current.add(ord.id);
-              if (ord.status === 'new' && (!restaurantId || ord.restaurant_id === restaurantId)) {
-                startAlarm(
-                  'new_order',
-                  'NEW KITCHEN ORDER',
-                  `Table ${ord.table_name || 'N/A'} - Total: ₹${ord.total || 0}`
-                ).catch(() => {});
-                sendSystemAlert(
-                  'NEW KITCHEN ORDER',
-                  `Table ${ord.table_name || 'N/A'} - Total: ₹${ord.total || 0}`
-                ).catch(() => {});
-              }
-            }
-          });
-        } else {
-          data.forEach(ord => { if (ord?.id) knownOrderIdsRef.current.add(ord.id); });
-        }
-
-        setOrders(data);
-      }
-    } catch (e) {
-      console.log('Error fetching kitchen orders:', e);
+      console.log('KDS load error:', e?.message);
+      setIsOffline(true);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
+  }, [restaurantId, bellOn]);
 
-  const updateStatus = async (id, status) => {
-    try {
-      const staffName = profile?.full_name || profile?.role || 'Kitchen Staff';
-      const updatePayload = {
-        status,
-        updated_at: new Date().toISOString()
-      };
+  // Flush pending offline queue when online
+  const flushPendingQueue = useCallback(async () => {
+    if (pendingQueue.length === 0) return;
+    console.log(`[KDS] Retrying ${pendingQueue.length} queued offline actions...`);
+    const remaining = [];
+    for (const item of pendingQueue) {
+      try {
+        if (item.type === 'status_update') {
+          const updates = { status: item.newStatus };
+          if (item.newStatus === 'accepted') updates.accepted_by = item.staffName;
+          if (item.newStatus === 'preparing') updates.preparing_by = item.staffName;
+          if (item.newStatus === 'ready') updates.ready_by = item.staffName;
 
-      // When marking completed, auto-mark payment as paid at the same time (1-click completion & payment verification)
-      if (status === 'completed') {
-        updatePayload.payment_status = 'paid';
-        updatePayload.paid_at = new Date().toISOString();
-        updatePayload.marked_paid_by = staffName;
-        updatePayload.completed_at = new Date().toISOString();
-        updatePayload.completed_by = staffName;
-      }
-
-      const { error } = await supabase
-        .from('orders')
-        .update(updatePayload)
-        .eq('id', id);
-
-      if (!error) {
-        // Mark non-cancelled order items and batches when order marked ready, served, or completed
-        if (['ready', 'served', 'completed'].includes(status)) {
-          try {
-            await supabase
-              .from('order_items')
-              .update({ is_served: true, status: 'served' })
-              .eq('order_id', id)
-              .neq('status', 'cancelled');
-          } catch (_) {}
-
-          try {
-            await supabase
-              .from('order_batches')
-              .update({ status: status === 'completed' ? 'served' : status, updated_at: new Date().toISOString() })
-              .eq('order_id', id)
-              .neq('status', 'cancelled');
-          } catch (_) {}
-        }
-
-        if (['accepted', 'preparing', 'ready', 'served', 'completed'].includes(status)) {
-          stopAlarm().catch(() => {});
-        }
-        fetchOrders();
-      } else {
-        Alert.alert('Error', error.message);
-      }
-    } catch (e) {
-      Alert.alert('Error', 'Failed to update order status');
-    }
-  };
-
-  const handleConfirmCancel = async () => {
-    if (!cancellingOrderId) return;
-
-    try {
-      const cancellerName = profile?.full_name || 'Kitchen Staff';
-      const reasonText = cancellationReason || 'Kitchen Closed';
-
-      // Fetch all batches and items for this order from Supabase
-      const { data: batches } = await supabase
-        .from('order_batches')
-        .select('*')
-        .eq('order_id', cancellingOrderId);
-
-      const { data: items } = await supabase
-        .from('order_items')
-        .select('*')
-        .eq('order_id', cancellingOrderId);
-
-      const safeBatches = batches || [];
-      const safeItems = items || [];
-
-      // Find the uncancelled batches
-      const uncancelledBatches = safeBatches.filter(b => b.status !== 'cancelled');
-      const latestUncancelledBatch = [...uncancelledBatches].sort((a, b) => b.batch_number - a.batch_number)[0];
-
-      if (uncancelledBatches.length > 1 || (latestUncancelledBatch && latestUncancelledBatch.status !== 'new')) {
-        // Cancel ONLY the target/latest batch
-        const targetBatchId = latestUncancelledBatch ? latestUncancelledBatch.id : null;
-
-        if (targetBatchId) {
-          await supabase
-            .from('order_batches')
-            .update({ status: 'cancelled', updated_at: new Date().toISOString() })
-            .eq('id', targetBatchId);
-
-          await supabase
-            .from('order_items')
-            .update({ is_cancelled: true, status: 'cancelled' })
-            .eq('batch_id', targetBatchId);
-        }
-
-        // Re-calculate valid items (items from non-cancelled batches)
-        const remainingValidItems = safeItems.filter(item => {
-          if (item.is_cancelled || item.status === 'cancelled') return false;
-          if (item.batch_id === targetBatchId) return false;
-          if (item.batch_id) {
-            const b = safeBatches.find(batch => batch.id === item.batch_id);
-            if (b && b.status === 'cancelled') return false;
+          await supabase.from('order_batches').update(updates).eq('id', item.targetId);
+          if (item.orderId) {
+            await supabase.from('orders').update({ status: item.newStatus }).eq('id', item.orderId);
           }
-          return true;
-        });
-
-        const validTotal = remainingValidItems.reduce((sum, item) => sum + ((Number(item.price) || 0) * (Number(item.quantity) || 1)), 0);
-
-        if (remainingValidItems.length > 0) {
-          // Keep parent order active!
-          const remainingBatches = uncancelledBatches.filter(b => b.id !== targetBatchId);
-          const highestStatus = remainingBatches.some(b => b.status === 'served') ? 'served'
-            : remainingBatches.some(b => b.status === 'ready') ? 'ready'
-            : remainingBatches.some(b => b.status === 'preparing') ? 'preparing'
-            : remainingBatches.some(b => b.status === 'accepted') ? 'accepted'
-            : 'new';
-
-          await supabase
-            .from('orders')
-            .update({
-              status: highestStatus,
-              subtotal: validTotal,
-              total: validTotal,
-              cancelled_by: cancellerName,
-              cancellation_reason: reasonText,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', cancellingOrderId);
-        } else {
-          // No valid items left, cancel whole order
-          await supabase
-            .from('orders')
-            .update({
-              status: 'cancelled',
-              subtotal: 0,
-              total: 0,
-              cancelled_by: cancellerName,
-              cancellation_reason: reasonText,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', cancellingOrderId);
+        } else if (item.type === 'cancel_batch') {
+          const cancelTag = `[CANCELLED] ${item.reason}`;
+          await supabase.from('order_batches').update({ special_instructions: cancelTag, status: 'ready' }).eq('id', item.targetId);
+          await supabase.from('order_items').update({ notes: cancelTag }).eq('batch_id', item.targetId);
         }
-      } else {
-        // Entire order cancelled from start (only 1 batch and it was new)
-        if (latestUncancelledBatch) {
-          await supabase
-            .from('order_batches')
-            .update({ status: 'cancelled', updated_at: new Date().toISOString() })
-            .eq('id', latestUncancelledBatch.id);
-        }
-        await supabase
-          .from('order_items')
-          .update({ is_cancelled: true, status: 'cancelled' })
-          .eq('order_id', cancellingOrderId);
-
-        await supabase
-          .from('orders')
-          .update({
-            status: 'cancelled',
-            subtotal: 0,
-            total: 0,
-            cancelled_by: cancellerName,
-            cancellation_reason: reasonText,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', cancellingOrderId);
+      } catch (err) {
+        console.log('[KDS] Failed retrying pending action:', err?.message);
+        remaining.push(item);
       }
+    }
+    await savePendingQueue(remaining);
+    await loadOrders();
+  }, [pendingQueue, loadOrders]);
 
-      stopAlarm().catch(() => {});
-      setCancelModalVisible(false);
-      setCancellingOrderId(null);
-      setCancellationReason('');
-      fetchOrders();
+  useEffect(() => {
+    if (!isOffline && pendingQueue.length > 0) {
+      flushPendingQueue();
+    }
+  }, [isOffline, pendingQueue, flushPendingQueue]);
+
+  useEffect(() => {
+    loadOrders();
+
+    if (!restaurantId) return;
+
+    // Subscribe to order_batches changes — filter via orders.restaurant_id at app level
+    const channel = supabase
+      .channel(`kds-realtime-${restaurantId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_batches' }, loadOrders)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'orders',
+        filter: `restaurant_id=eq.${restaurantId}`,
+      }, loadOrders)
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          setIsOffline(false);
+        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          setIsOffline(true);
+        }
+      });
+
+    const timer = setInterval(loadOrders, 6000);
+
+    return () => {
+      clearInterval(timer);
+      supabase.removeChannel(channel);
+      stopAllAlarms();
+    };
+  }, [loadOrders, restaurantId]);
+
+  const updateBatchStatus = async (batch, newStatus) => {
+    const targetId = batch.id;
+    stopAlarm('new_order');
+    Vibration.cancel();
+
+    const staffName = profile?.full_name || 'Kitchen';
+
+    // Optimistic UI updates
+    if (newStatus === 'accepted' || newStatus === 'preparing') {
+      const updated = { ...batch, status: newStatus, accepted_by: staffName };
+      setNewOrders(prev => prev.filter(b => b.id !== targetId));
+      setPreparingOrders(prev => [...prev.filter(b => b.id !== targetId), updated]);
+      if (activeTab === 'new') {
+        setActiveTab('preparing');
+      }
+    } else if (newStatus === 'ready') {
+      const updated = { ...batch, status: 'ready', ready_by: staffName };
+      setPreparingOrders(prev => prev.filter(b => b.id !== targetId));
+      setReadyOrders(prev => [...prev.filter(b => b.id !== targetId), updated]);
+    }
+
+    setActionLoading(prev => ({ ...prev, [targetId]: true }));
+    try {
+      const updates = { status: newStatus };
+      if (newStatus === 'accepted') updates.accepted_by = staffName;
+      if (newStatus === 'preparing') updates.preparing_by = staffName;
+      if (newStatus === 'ready') updates.ready_by = staffName;
+
+      const { error: batchErr } = await supabase.from('order_batches').update(updates).eq('id', targetId);
+      if (batchErr) throw batchErr;
+
+      if (batch.order_id) {
+        await supabase.from('orders').update({ status: newStatus }).eq('id', batch.order_id);
+      }
+      setIsOffline(false);
+      await loadOrders();
     } catch (e) {
-      Alert.alert('Error', 'Failed to cancel order');
+      console.log('Update batch error (queueing for retry):', e?.message);
+      setIsOffline(true);
+      // Queue action for retry
+      const actionItem = {
+        type: 'status_update',
+        targetId,
+        orderId: batch.order_id,
+        newStatus,
+        staffName,
+        timestamp: Date.now(),
+      };
+      await savePendingQueue([...pendingQueue, actionItem]);
+    } finally {
+      setActionLoading(prev => ({ ...prev, [targetId]: false }));
     }
   };
 
-  const safeOrders = orders || [];
-  const activeOrders = safeOrders.filter(o => ['new', 'accepted', 'preparing'].includes(o?.status));
-  const readyOrders = safeOrders.filter(o => o?.status === 'ready');
-  const historyOrders = safeOrders.filter(o => ['served', 'completed', 'cancelled'].includes(o?.status));
+  const cancelBatch = async (targetOverride, reasonOverride) => {
+    const target = (targetOverride && typeof targetOverride === 'object' && targetOverride.id) ? targetOverride : cancelTarget;
+    if (!target || !target.id) return;
+    const targetId = target.id;
+    const orderId = target.order_id || target.orders?.id;
+    const finalReason = (typeof reasonOverride === 'string' && reasonOverride) ? reasonOverride : cancelReason || 'Declined by kitchen';
 
-  const displayedOrders = 
-    activeTab === 'active' ? activeOrders :
-    activeTab === 'ready' ? readyOrders :
-    activeTab === 'history' ? historyOrders : safeOrders;
+    stopAlarm('new_order');
+    Vibration.cancel();
 
-  return (
-    <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.title}>{restaurantName}</Text>
-          <Text style={styles.subtitle}>Kitchen Display System (KDS)</Text>
+    // Optimistic remove from local list instantly
+    setNewOrders(prev => prev.filter(b => b.id !== targetId));
+    setPreparingOrders(prev => prev.filter(b => b.id !== targetId));
+    setReadyOrders(prev => prev.filter(b => b.id !== targetId));
+    setShowCancelModal(false);
+    setCancelTarget(null);
+
+    setActionLoading(prev => ({ ...prev, [targetId]: true }));
+    try {
+      // 1. Mark batch as cancelled with [CANCELLED] tag in special_instructions
+      const cancelTag = `[CANCELLED] ${finalReason}`;
+      await supabase.from('order_batches').update({
+        special_instructions: cancelTag,
+        status: 'ready'
+      }).eq('id', targetId);
+
+      // 2. Mark order_items in this batch with [CANCELLED] tag in notes
+      await supabase.from('order_items').update({
+        notes: cancelTag
+      }).eq('batch_id', targetId);
+
+      if (orderId) {
+        // 3. Fetch all batches for this order to check if any active batches remain
+        const { data: allBatches } = await supabase
+          .from('order_batches')
+          .select('id, status, special_instructions')
+          .eq('order_id', orderId);
+
+        const activeRemaining = (allBatches || []).filter(b =>
+          b.id !== targetId &&
+          !b.special_instructions?.includes('[CANCELLED]')
+        );
+
+        if (activeRemaining.length === 0) {
+          // ALL batches are cancelled -> Cancel parent order
+          await supabase.from('orders').update({
+            status: 'cancelled',
+            cancellation_reason: finalReason,
+            cancelled_at: new Date().toISOString(),
+            cancelled_by: profile?.full_name || 'Kitchen',
+          }).eq('id', orderId);
+        } else {
+          // Other batches are active or served -> Preserve parent order status & recalculate totals!
+          let parentStatus = 'new';
+          if (activeRemaining.some(b => b.status === 'served')) parentStatus = 'served';
+          else if (activeRemaining.some(b => b.status === 'ready')) parentStatus = 'ready';
+          else if (activeRemaining.some(b => b.status === 'preparing')) parentStatus = 'preparing';
+          else if (activeRemaining.some(b => b.status === 'accepted')) parentStatus = 'accepted';
+
+          // Recalculate active items subtotal & total
+          const activeBatchIds = new Set(activeRemaining.map(b => b.id));
+          const { data: allItems } = await supabase
+            .from('order_items')
+            .select('price, quantity, batch_id, notes')
+            .eq('order_id', orderId);
+
+          const validItems = (allItems || []).filter(i =>
+            activeBatchIds.has(i.batch_id) && !i.notes?.includes('[CANCELLED]')
+          );
+
+          const newSubtotal = validItems.reduce((sum, i) => sum + (Number(i.price) * Number(i.quantity)), 0);
+          const newGst = parseFloat((newSubtotal * 0.05).toFixed(2));
+          const newTotal = parseFloat((newSubtotal + newGst).toFixed(2));
+
+          await supabase.from('orders').update({
+            status: parentStatus,
+            subtotal: newSubtotal,
+            gst: newGst,
+            total: newTotal,
+            cancelled_by: null,
+            cancellation_reason: null,
+            cancelled_at: null
+          }).eq('id', orderId);
+        }
+      }
+
+      setCancelReason('');
+      setIsOffline(false);
+      await loadOrders();
+    } catch (e) {
+      console.log('Cancel batch error (queueing for retry):', e?.message);
+      setIsOffline(true);
+      const actionItem = {
+        type: 'cancel_batch',
+        targetId,
+        orderId,
+        reason: finalReason,
+        timestamp: Date.now(),
+      };
+      await savePendingQueue([...pendingQueue, actionItem]);
+    } finally {
+      setActionLoading(prev => ({ ...prev, [targetId]: false }));
+    }
+  };
+
+  const activeBatches =
+    activeTab === 'new' ? newOrders :
+    activeTab === 'preparing' ? preparingOrders : readyOrders;
+
+  const totalActive = newOrders.length + preparingOrders.length + readyOrders.length;
+
+  const renderBatchCard = useCallback(({ item: batch }) => {
+    const isBusy = actionLoading[batch.id];
+    const order = batch.orders || {};
+    const tableName = order.table_name || (order.order_type === 'takeaway' ? 'Takeaway' : `Table ${batch.table_id || ''}`);
+    const items = Array.isArray(batch.order_items) && batch.order_items.length > 0
+      ? batch.order_items
+      : (Array.isArray(batch.items) ? batch.items : []);
+
+    return (
+      <View style={styles.batchCard}>
+        {/* Card Header */}
+        <View style={styles.cardHeader}>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Ionicons
+              name={order.order_type === 'takeaway' ? 'bag-handle-outline' : 'restaurant-outline'}
+              size={18}
+              color={COLORS.textDark}
+              style={{ marginRight: 6 }}
+            />
+            <Text style={styles.cardTableName}>{tableName}</Text>
+          </View>
+
+          <View style={styles.cardHeaderRight}>
+            <Ionicons name="time-outline" size={14} color="#94a3b8" style={{ marginRight: 4 }} />
+            <Text style={styles.timeAgo}>{timeAgo(batch.created_at)}</Text>
+          </View>
         </View>
 
-        {isAlarmActive() && (
-          <TouchableOpacity onPress={() => stopAlarm().catch(() => {})} style={styles.stopAlarmBtn}>
-            <Text style={styles.stopAlarmText}>STOP ALARM</Text>
-          </TouchableOpacity>
-        )}
+        {/* Item List */}
+        <View style={styles.itemsContainer}>
+          {items.map((it, idx) => (
+            <View key={idx} style={styles.itemRow}>
+              <View style={[styles.vegDot, { backgroundColor: it.is_veg === false ? '#ef4444' : '#22c55e' }]} />
+              <Text style={styles.itemQty}>{it.quantity || 1}x</Text>
+              <Text style={styles.itemName}>{it.menu_item_name || it.name || it.item_name || 'Item'}</Text>
+              {it.notes ? <Text style={styles.itemNotes}>({it.notes})</Text> : null}
+            </View>
+          ))}
+        </View>
+
+        {/* Staff Tag */}
+        {batch.accepted_by ? (
+          <Text style={styles.staffTag}>Accepted by: {batch.accepted_by}</Text>
+        ) : null}
+
+        {/* Action Buttons */}
+        <View style={styles.actionRow}>
+          {activeTab === 'new' && (
+            <>
+              <TouchableOpacity
+                style={[styles.btn, { backgroundColor: '#ef4444', flex: 1, marginRight: 8 }]}
+                disabled={isBusy}
+                onPress={() => { setCancelTarget(batch); setShowCancelModal(true); }}
+              >
+                <Text style={styles.btnText}>Decline</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.btn, { backgroundColor: '#059669', flex: 2 }]}
+                disabled={isBusy}
+                onPress={() => updateBatchStatus(batch, 'accepted')}
+              >
+                {isBusy ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <>
+                    <Ionicons name="checkmark-circle-outline" size={18} color="#fff" style={{ marginRight: 6 }} />
+                    <Text style={styles.btnText}>Accept Order</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </>
+          )}
+
+          {activeTab === 'preparing' && (
+            batch.status === 'accepted' ? (
+              <TouchableOpacity
+                style={[styles.btn, { backgroundColor: COLORS.primary, flex: 1 }]}
+                disabled={isBusy}
+                onPress={() => updateBatchStatus(batch, 'preparing')}
+              >
+                {isBusy ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <>
+                    <Ionicons name="restaurant-outline" size={18} color="#fff" style={{ marginRight: 6 }} />
+                    <Text style={styles.btnText}>Start Cooking</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={[styles.btn, { backgroundColor: '#22c55e', flex: 1 }]}
+                disabled={isBusy}
+                onPress={() => updateBatchStatus(batch, 'ready')}
+              >
+                {isBusy ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <>
+                    <Ionicons name="checkmark-done-circle-outline" size={18} color="#fff" style={{ marginRight: 6 }} />
+                    <Text style={styles.btnText}>Mark Ready</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            )
+          )}
+
+          {activeTab === 'ready' && (
+            <View style={styles.waitingNotice}>
+              <Ionicons name="checkmark-circle" size={18} color="#22c55e" style={{ marginRight: 6 }} />
+              <Text style={styles.waitingText}>Ready for Waiter Pickup</Text>
+            </View>
+          )}
+        </View>
+      </View>
+    );
+  }, [actionLoading, activeTab, updateBatchStatus]);
+
+  return (
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+      {/* Header */}
+      <View style={styles.header}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.title}>Kitchen Display</Text>
+          <Text style={styles.subtitle}>{totalActive} active orders in kitchen</Text>
+        </View>
+
+        <OTAUpdateBtn style={{ marginRight: 8 }} />
+
+        <TouchableOpacity
+          style={[styles.bellBtn, bellOn ? styles.bellBtnOn : styles.bellBtnOff, { marginRight: 8 }]}
+          onPress={() => setBellOn(!bellOn)}
+        >
+          <Ionicons
+            name={bellOn ? 'notifications' : 'notifications-off-outline'}
+            size={20}
+            color={bellOn ? '#ffffff' : '#64748b'}
+          />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.bellBtn, { backgroundColor: '#fee2e2' }]}
+          onPress={async () => {
+            stopAllAlarms();
+            await supabase.auth.signOut().catch(() => {});
+            navigation.replace('Login');
+          }}
+        >
+          <Ionicons name="log-out-outline" size={20} color="#ef4444" />
+        </TouchableOpacity>
       </View>
 
-      {/* Tabs */}
-      <View style={styles.tabsContainer}>
-        <TouchableOpacity 
-          style={[styles.tab, activeTab === 'active' && styles.activeTab]}
-          onPress={() => setActiveTab('active')}
+      {/* Offline Connectivity Banner */}
+      {isOffline && (
+        <View style={styles.offlineBanner}>
+          <Ionicons name="wifi-outline" size={16} color="#ffffff" style={{ marginRight: 8 }} />
+          <Text style={styles.offlineBannerText}>
+            ⚡ Offline mode — Changes will auto-sync on reconnect {pendingQueue.length > 0 ? `(${pendingQueue.length} pending)` : ''}
+          </Text>
+        </View>
+      )}
+
+      {/* New Order Alert Banner */}
+      {hasNewOrder && (
+        <Animated.View style={[styles.alertBanner, { transform: [{ scale: pulseAnim }] }]}>
+          <Ionicons name="alert-circle" size={20} color="#ffffff" style={{ marginRight: 8 }} />
+          <Text style={styles.alertBannerText}>NEW ORDER RECEIVED - Action Required!</Text>
+        </Animated.View>
+      )}
+
+      {/* Top Segmented Tab Slider */}
+      <View style={styles.tabSliderContainer}>
+        <TouchableOpacity
+          style={[styles.tabSliderBtn, activeTab === 'new' && styles.tabBtnNewActive]}
+          onPress={() => setActiveTab('new')}
         >
-          <Text style={[styles.tabText, activeTab === 'active' && styles.activeTabText]}>
-            Preparing ({activeOrders.length})
+          <Text style={[styles.tabSliderText, activeTab === 'new' && styles.tabTextActive]}>
+            New ({newOrders.length})
           </Text>
         </TouchableOpacity>
 
-        <TouchableOpacity 
-          style={[styles.tab, activeTab === 'ready' && styles.activeTab]}
+        <TouchableOpacity
+          style={[styles.tabSliderBtn, activeTab === 'preparing' && styles.tabBtnPrepActive]}
+          onPress={() => setActiveTab('preparing')}
+        >
+          <Text style={[styles.tabSliderText, activeTab === 'preparing' && styles.tabTextActive]}>
+            Preparing ({preparingOrders.length})
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.tabSliderBtn, activeTab === 'ready' && styles.tabBtnReadyActive]}
           onPress={() => setActiveTab('ready')}
         >
-          <Text style={[styles.tabText, activeTab === 'ready' && styles.activeTabText]}>
+          <Text style={[styles.tabSliderText, activeTab === 'ready' && styles.tabTextActive]}>
             Ready ({readyOrders.length})
           </Text>
         </TouchableOpacity>
-
-        <TouchableOpacity 
-          style={[styles.tab, activeTab === 'history' && styles.activeTab]}
-          onPress={() => setActiveTab('history')}
-        >
-          <Text style={[styles.tabText, activeTab === 'history' && styles.activeTabText]}>
-            History ({historyOrders.length})
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity 
-          style={[styles.tab, activeTab === 'all' && styles.activeTab]}
-          onPress={() => setActiveTab('all')}
-        >
-          <Text style={[styles.tabText, activeTab === 'all' && styles.activeTabText]}>
-            All ({safeOrders.length})
-          </Text>
-        </TouchableOpacity>
       </View>
 
-      {/* Content */}
-      {loading ? (
-        <View style={styles.loadingBox}>
-          <ActivityIndicator size="large" color="#0ea5e9" />
-          <Text style={styles.loadingText}>Loading kitchen orders...</Text>
+      {/* Main Order List */}
+      {loading && !refreshing ? (
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color={COLORS.primary} />
+        </View>
+      ) : !restaurantId ? (
+        <View style={styles.center}>
+          <MaterialCommunityIcons name="chef-hat" size={54} color="#cbd5e1" style={{ marginBottom: 16 }} />
+          <Text style={[styles.emptyTitle, { textAlign: 'center', paddingHorizontal: 32 }]}>
+            Restaurant Not Linked
+          </Text>
+          <Text style={[styles.emptySubtitle, { textAlign: 'center', paddingHorizontal: 32, marginTop: 8 }]}>
+            Your kitchen account is not linked to a restaurant.{`\n`}Contact your restaurant owner to link your account.
+          </Text>
         </View>
       ) : (
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          {displayedOrders.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyText}>No orders in this kitchen view.</Text>
+        <FlatList
+          data={activeBatches}
+          keyExtractor={item => item.id}
+          renderItem={renderBatchCard}
+          contentContainerStyle={styles.listContent}
+          initialNumToRender={8}
+          maxToRenderPerBatch={10}
+          windowSize={5}
+          removeClippedSubviews={Platform.OS === 'android'}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadOrders(); }} />
+          }
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <MaterialCommunityIcons name="chef-hat" size={54} color="#cbd5e1" style={{ marginBottom: 12 }} />
+              <Text style={styles.emptyTitle}>
+                {activeTab === 'new' ? 'No New Orders' : activeTab === 'preparing' ? 'No Orders Preparing' : 'No Ready Orders'}
+              </Text>
+              <Text style={styles.emptySubtitle}>Orders will appear here automatically in real-time</Text>
             </View>
-          ) : (
-            displayedOrders.map((order) => {
-              if (!order || !order.id) return null;
-              
-              let newItems = [];
-              let servedItems = [];
-              let cancelledItems = [];
-              let newCount = 0;
-              let servedCount = 0;
-              let cancelledCount = 0;
-
-              try {
-                const res = consolidateItems(order.order_items || [], order.status);
-                newItems = res.newItems || [];
-                servedItems = res.servedItems || [];
-                cancelledItems = res.cancelledItems || [];
-                newCount = newItems.reduce((s, i) => s + i.quantity, 0);
-                servedCount = servedItems.reduce((s, i) => s + i.quantity, 0);
-                cancelledCount = cancelledItems.reduce((s, i) => s + i.quantity, 0);
-              } catch (_) {}
-
-              return (
-                <View key={order.id} style={styles.orderCard}>
-                  {/* Order Top Header */}
-                  <View style={styles.cardHeader}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <Text style={styles.tableName}>Table: {order.table_name || 'N/A'}</Text>
-                      {order.order_type === 'takeaway' && (
-                        <View style={styles.takeawayBadge}>
-                          <Text style={styles.takeawayText}>Takeaway</Text>
-                        </View>
-                      )}
-                    </View>
-
-                    <View style={[styles.statusBadge, { backgroundColor: getStatusColor(order.status) }]}>
-                      <Text style={styles.statusText}>{(order.status || 'NEW').toUpperCase()}</Text>
-                    </View>
-                  </View>
-
-                  <Text style={styles.metaText}>
-                    Order {getFormattedOrderId(order, restaurantName, safeOrders)} • Time: {order.created_at ? new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A'}
-                  </Text>
-
-                  {/* Cancellation Banner */}
-                  {(order.status === 'cancelled' || order.cancellation_reason) && (
-                    <View style={styles.cancelledBanner}>
-                      <Text style={styles.cancelledTitle}>
-                        {order.status === 'cancelled' ? 'Order Cancelled' : 'Reorder Batch Cancelled'}
-                      </Text>
-                      {order.cancelled_by ? <Text style={styles.cancelledSub}>• Cancelled By: {order.cancelled_by}</Text> : null}
-                      {order.cancellation_reason ? <Text style={styles.cancelledSub}>• Reason: "{order.cancellation_reason}"</Text> : null}
-                    </View>
-                  )}
-
-                  {/* Items List Box */}
-                  <View style={styles.itemsBox}>
-                    {/* 1. TOP SECTION: NEW ITEMS TO PREPARE */}
-                    {newItems.length > 0 ? (
-                      <View style={{ marginBottom: (servedItems.length > 0 || cancelledItems.length > 0) ? 10 : 0 }}>
-                        <View style={styles.newHeaderRow}>
-                          <Text style={styles.itemsHeaderTitle}>ITEMS TO PREPARE ({newCount}):</Text>
-                          <View style={styles.newTagBadge}>
-                            <Text style={styles.newTagText}>NEW ITEMS</Text>
-                          </View>
-                        </View>
-
-                        {newItems.map((item, i) => (
-                          <View key={`new_${i}`} style={styles.itemRow}>
-                            <Text style={styles.itemQty}>{item.quantity}x</Text>
-                            <Text style={styles.itemName}>{item.name}</Text>
-                          </View>
-                        ))}
-                      </View>
-                    ) : (
-                      <Text style={styles.itemsHeaderTitle}>
-                        {servedCount > 0 ? `ALL ACTIVE ITEMS PREPARED (${servedCount}):` : `ITEMS (${newCount + servedCount}):`}
-                      </Text>
-                    )}
-
-                    {/* 2. MIDDLE SECTION: PREVIOUSLY SERVED ITEMS */}
-                    {servedItems.length > 0 && (
-                      <View style={styles.servedSection}>
-                        <Text style={styles.servedHeaderTitle}>PREVIOUSLY SERVED ({servedCount}):</Text>
-                        {servedItems.map((item, i) => (
-                          <View key={`served_${i}`} style={styles.itemRowServed}>
-                            <Text style={styles.itemQtyServed}>{item.quantity}x</Text>
-                            <Text style={styles.itemNameServed}>{item.name}</Text>
-                            <View style={styles.servedCheckBadge}>
-                              <Text style={styles.servedCheckText}>✓ Served</Text>
-                            </View>
-                          </View>
-                        ))}
-                      </View>
-                    )}
-
-                    {/* 3. BOTTOM SECTION: CANCELLED ITEMS */}
-                    {cancelledItems.length > 0 && (
-                      <View style={styles.cancelledSection}>
-                        <Text style={styles.cancelledHeaderTitle}>CANCELLED BY KITCHEN ({cancelledCount}):</Text>
-                        {cancelledItems.map((item, i) => (
-                          <View key={`can_${i}`} style={styles.itemRowCancelled}>
-                            <Text style={styles.itemQtyCancelled}>{item.quantity}x</Text>
-                            <Text style={styles.itemNameCancelled}>{item.name}</Text>
-                            <View style={styles.cancelledTagBadge}>
-                              <Text style={styles.cancelledTagText}>Cancelled</Text>
-                            </View>
-                          </View>
-                        ))}
-                      </View>
-                    )}
-                  </View>
-
-                  {/* Kitchen Action Buttons (Strict Sequential Flow) */}
-                  <View style={styles.actions}>
-                    {/* 1. NEW STATUS: Only Accept Order and Reject */}
-                    {order.status === 'new' && (
-                      <>
-                        <TouchableOpacity 
-                          style={[styles.actionBtn, { backgroundColor: '#059669' }]}
-                          onPress={() => updateStatus(order.id, 'accepted')}
-                        >
-                          <Text style={styles.actionBtnText}>Accept Order</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity 
-                          style={[styles.actionBtn, { backgroundColor: '#ef4444' }]}
-                          onPress={() => {
-                            setCancellingOrderId(order.id);
-                            setCancellationReason('');
-                            setCancelModalVisible(true);
-                          }}
-                        >
-                          <Text style={styles.actionBtnText}>Reject</Text>
-                        </TouchableOpacity>
-                      </>
-                    )}
-
-                    {/* 2. ACCEPTED STATUS: Only Start Preparing and Cancel */}
-                    {order.status === 'accepted' && (
-                      <>
-                        <TouchableOpacity 
-                          style={[styles.actionBtn, { backgroundColor: '#3b82f6' }]}
-                          onPress={() => updateStatus(order.id, 'preparing')}
-                        >
-                          <Text style={styles.actionBtnText}>Start Preparing</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity 
-                          style={[styles.actionBtn, { backgroundColor: '#ef4444' }]}
-                          onPress={() => {
-                            setCancellingOrderId(order.id);
-                            setCancellationReason('');
-                            setCancelModalVisible(true);
-                          }}
-                        >
-                          <Text style={styles.actionBtnText}>Cancel</Text>
-                        </TouchableOpacity>
-                      </>
-                    )}
-
-                    {/* 3. PREPARING STATUS: Only Mark Ready and Cancel */}
-                    {order.status === 'preparing' && (
-                      <>
-                        <TouchableOpacity 
-                          style={[styles.actionBtn, { backgroundColor: '#8b5cf6' }]}
-                          onPress={() => updateStatus(order.id, 'ready')}
-                        >
-                          <Text style={styles.actionBtnText}>Mark Ready</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity 
-                          style={[styles.actionBtn, { backgroundColor: '#ef4444' }]}
-                          onPress={() => {
-                            setCancellingOrderId(order.id);
-                            setCancellationReason('');
-                            setCancelModalVisible(true);
-                          }}
-                        >
-                          <Text style={styles.actionBtnText}>Cancel</Text>
-                        </TouchableOpacity>
-                      </>
-                    )}
-
-                    {/* READY, SERVED, COMPLETED, CANCELLED: NO CANCEL BUTTON AT ALL! */}
-                  </View>
-                </View>
-              );
-            })
-          )}
-        </ScrollView>
+          }
+        />
       )}
 
-      {/* Cancellation Modal */}
-      <Modal visible={cancelModalVisible} transparent animationType="fade">
+      {/* Cancel/Decline Modal */}
+      <Modal
+        visible={showCancelModal}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setShowCancelModal(false)}
+      >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>Select Cancellation Reason</Text>
-            
-            <Text style={styles.presetLabel}>QUICK REASONS:</Text>
-            <View style={styles.presetContainer}>
-              {PRESET_CANCEL_REASONS.map((preset, idx) => (
-                <TouchableOpacity
-                  key={idx}
-                  style={[
-                    styles.presetChip,
-                    cancellationReason === preset && styles.presetChipActive
-                  ]}
-                  onPress={() => setCancellationReason(preset)}
-                >
-                  <Text style={[
-                    styles.presetChipText,
-                    cancellationReason === preset && styles.presetChipTextActive
-                  ]}>
-                    {preset}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Decline Order Batch</Text>
+            <Text style={{ fontSize: 13, color: '#64748b', marginBottom: 12 }}>Select a reason for declining:</Text>
 
-            <TextInput
-              style={styles.modalInput}
-              placeholder="Or type custom reason..."
-              placeholderTextColor="#94a3b8"
-              value={cancellationReason}
-              onChangeText={setCancellationReason}
-            />
-
-            <View style={styles.modalActions}>
-              <TouchableOpacity 
-                style={styles.modalCancelBtn} 
-                onPress={() => setCancelModalVisible(false)}
+            {CANCEL_REASONS.map(r => (
+              <TouchableOpacity
+                key={r}
+                style={[styles.reasonOption, cancelReason === r && styles.reasonOptionSelected]}
+                onPress={() => {
+                  setCancelReason(r);
+                  cancelBatch(cancelTarget, r);
+                }}
               >
-                <Text style={styles.modalCancelText}>Back</Text>
+                <Ionicons
+                  name={cancelReason === r ? 'radio-button-on' : 'radio-button-off'}
+                  size={18}
+                  color={cancelReason === r ? COLORS.primary : '#94a3b8'}
+                  style={{ marginRight: 10 }}
+                />
+                <Text style={[styles.reasonText, cancelReason === r && { color: COLORS.primary, fontWeight: '700' }]}>{r}</Text>
               </TouchableOpacity>
-              <TouchableOpacity 
-                style={styles.modalConfirmBtn} 
-                onPress={handleConfirmCancel}
+            ))}
+
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 16 }}>
+              <TouchableOpacity
+                style={[styles.modalBtn, { backgroundColor: '#f1f5f9' }]}
+                onPress={() => setShowCancelModal(false)}
               >
-                <Text style={styles.modalConfirmText}>Confirm Cancel</Text>
+                <Text style={{ color: '#64748b', fontWeight: '600' }}>Back</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.modalBtn, { backgroundColor: '#ef4444', marginLeft: 10 }]}
+                onPress={() => cancelBatch(cancelTarget, cancelReason)}
+              >
+                <Text style={{ color: '#ffffff', fontWeight: '700' }}>Confirm Decline</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
-    </View>
+    </SafeAreaView>
   );
 }
 
-function getStatusColor(status) {
-  switch (status) {
-    case 'new': return '#ef4444';
-    case 'accepted': return '#f59e0b';
-    case 'preparing': return '#3b82f6';
-    case 'ready': return '#8b5cf6';
-    case 'served': return '#10b981';
-    case 'completed': return '#64748b';
-    case 'cancelled': return '#94a3b8';
-    default: return '#64748b';
-  }
-}
-
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f8fafc', paddingTop: 50 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: '#e2e8f0', backgroundColor: '#ffffff' },
-  title: { fontSize: 20, fontWeight: 'bold', color: '#0f172a' },
-  subtitle: { fontSize: 12, color: '#64748b' },
-  stopAlarmBtn: { backgroundColor: '#ef4444', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
-  stopAlarmText: { color: 'white', fontWeight: 'bold', fontSize: 12 },
-  tabsContainer: { flexDirection: 'row', backgroundColor: '#e2e8f0', margin: 12, borderRadius: 8, padding: 4 },
-  tab: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 6 },
-  activeTab: { backgroundColor: '#059669' },
-  tabText: { color: '#64748b', fontWeight: 'bold', fontSize: 12 },
-  activeTabText: { color: 'white' },
-  loadingBox: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  loadingText: { color: '#64748b', marginTop: 12 },
-  scrollContent: { padding: 12 },
-  emptyState: { padding: 40, alignItems: 'center' },
-  emptyText: { color: '#64748b', fontSize: 15 },
-  orderCard: { backgroundColor: '#ffffff', borderRadius: 12, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: '#e2e8f0', shadowColor: '#0f172a', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 2 },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  tableName: { fontSize: 18, fontWeight: 'bold', color: '#0f172a' },
-  takeawayBadge: { backgroundColor: '#8b5cf6', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginLeft: 8 },
-  takeawayText: { color: 'white', fontSize: 10, fontWeight: 'bold' },
-  statusBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
-  statusText: { color: 'white', fontSize: 11, fontWeight: 'bold' },
-  metaText: { color: '#64748b', fontSize: 12, marginVertical: 4 },
-  cancelledBanner: { backgroundColor: '#fef2f2', borderColor: '#fca5a5', borderWidth: 1, borderRadius: 8, padding: 8, marginVertical: 6 },
-  cancelledTitle: { color: '#dc2626', fontWeight: 'bold', fontSize: 12 },
-  cancelledSub: { color: '#64748b', fontSize: 11, marginTop: 2 },
-  itemsBox: { backgroundColor: '#f8fafc', borderRadius: 8, padding: 10, marginTop: 8, borderWidth: 1, borderColor: '#f1f5f9' },
-  newHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
-  itemsHeaderTitle: { color: '#0f172a', fontSize: 12, fontWeight: 'bold' },
-  newTagBadge: { backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#10b981', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
-  newTagText: { color: '#059669', fontSize: 10, fontWeight: 'bold' },
-  itemRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 4 },
-  itemQty: { color: '#059669', fontWeight: 'bold', fontSize: 16, width: 36 },
-  itemName: { color: '#0f172a', fontSize: 16, fontWeight: 'bold', flex: 1 },
-  servedSection: { borderTopWidth: 1, borderTopColor: '#cbd5e1', paddingTop: 8, marginTop: 6 },
-  servedHeaderTitle: { color: '#64748b', fontSize: 11, fontWeight: 'bold', marginBottom: 4 },
-  itemRowServed: { flexDirection: 'row', alignItems: 'center', marginVertical: 3 },
-  itemQtyServed: { color: '#64748b', fontWeight: 'bold', fontSize: 14, width: 36 },
-  itemNameServed: { color: '#64748b', fontSize: 14, flex: 1 },
-  servedCheckBadge: { backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#cbd5e1', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginLeft: 6 },
-  servedCheckText: { color: '#64748b', fontSize: 10, fontWeight: 'bold' },
-  cancelledSection: { borderTopWidth: 1, borderTopColor: '#fca5a5', paddingTop: 8, marginTop: 6 },
-  cancelledHeaderTitle: { color: '#ef4444', fontSize: 11, fontWeight: 'bold', marginBottom: 4 },
-  itemRowCancelled: { flexDirection: 'row', alignItems: 'center', marginVertical: 3 },
-  itemQtyCancelled: { color: '#ef4444', fontWeight: 'bold', fontSize: 14, width: 36, textDecorationLine: 'line-through' },
-  itemNameCancelled: { color: '#ef4444', fontSize: 14, flex: 1, textDecorationLine: 'line-through' },
-  cancelledTagBadge: { backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fca5a5', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginLeft: 6 },
-  cancelledTagText: { color: '#ef4444', fontSize: 10, fontWeight: 'bold' },
-  actions: { flexDirection: 'row', gap: 8, marginTop: 12 },
-  actionBtn: { flex: 1, padding: 10, borderRadius: 8, alignItems: 'center' },
-  actionBtnText: { color: 'white', fontWeight: 'bold', fontSize: 13 },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 20 },
-  modalBox: { backgroundColor: '#ffffff', borderRadius: 12, padding: 20, borderWidth: 1, borderColor: '#e2e8f0' },
-  modalTitle: { color: '#0f172a', fontSize: 16, fontWeight: 'bold', marginBottom: 8 },
-  presetLabel: { color: '#64748b', fontSize: 10, fontWeight: 'bold', marginBottom: 6 },
-  presetContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12 },
-  presetChip: { backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#cbd5e1', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 },
-  presetChipActive: { backgroundColor: '#ef4444', borderColor: '#ef4444' },
-  presetChipText: { color: '#475569', fontSize: 12, fontWeight: '500' },
-  presetChipTextActive: { color: 'white', fontWeight: 'bold' },
-  modalInput: { backgroundColor: '#f8fafc', color: '#0f172a', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, padding: 12, marginBottom: 16 },
-  modalActions: { flexDirection: 'row', gap: 10 },
-  modalCancelBtn: { flex: 1, padding: 12, borderRadius: 8, backgroundColor: '#e2e8f0', alignItems: 'center' },
-  modalCancelText: { color: '#475569', fontWeight: 'bold' },
-  modalConfirmBtn: { flex: 1, padding: 12, borderRadius: 8, backgroundColor: '#ef4444', alignItems: 'center' },
-  modalConfirmText: { color: 'white', fontWeight: 'bold' },
+  container: { flex: 1, backgroundColor: '#f8fafc' },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 10,
+    backgroundColor: '#ffffff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  title: { fontSize: 24, fontWeight: '700', color: '#0f172a' },
+  subtitle: { fontSize: 12, color: '#64748b', marginTop: 2 },
+  bellBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  bellBtnOn: { backgroundColor: COLORS.primary },
+  bellBtnOff: { backgroundColor: '#f1f5f9' },
+  offlineBanner: {
+    backgroundColor: '#3b82f6',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  offlineBannerText: { color: '#ffffff', fontWeight: '600', fontSize: 12 },
+  alertBanner: {
+    backgroundColor: '#ef4444',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justify: 'center',
+  },
+  alertBannerText: { color: '#ffffff', fontWeight: '700', fontSize: 13 },
+  tabSliderContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  tabSliderBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    borderRadius: 10,
+    backgroundColor: '#f1f5f9',
+    marginHorizontal: 4,
+  },
+  tabBtnNewActive: { backgroundColor: '#ef4444' },
+  tabBtnPrepActive: { backgroundColor: '#3b82f6' },
+  tabBtnReadyActive: { backgroundColor: '#22c55e' },
+  tabSliderText: { fontSize: 13, fontWeight: '600', color: '#64748b' },
+  tabTextActive: { color: '#ffffff', fontWeight: '700' },
+  listContent: { padding: 16 },
+  batchCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 14,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
+  },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  cardTableName: { fontSize: 18, fontWeight: '700', color: '#0f172a' },
+  cardHeaderRight: { flexDirection: 'row', alignItems: 'center' },
+  timeAgo: { fontSize: 12, color: '#94a3b8' },
+  itemsContainer: { marginBottom: 14 },
+  itemRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
+  vegDot: { width: 8, height: 8, borderRadius: 4, marginRight: 8 },
+  itemQty: { fontSize: 15, fontWeight: '700', color: '#0f172a', width: 28 },
+  itemName: { fontSize: 15, fontWeight: '600', color: '#1e293b', flex: 1 },
+  itemNotes: { fontSize: 12, color: '#f59e0b', fontStyle: 'italic', marginLeft: 6 },
+  staffTag: { fontSize: 11, color: '#64748b', fontStyle: 'italic', marginBottom: 12 },
+  actionRow: { flexDirection: 'row', alignItems: 'center' },
+  btn: { paddingVertical: 12, borderRadius: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
+  btnText: { color: '#ffffff', fontWeight: '700', fontSize: 14 },
+  waitingNotice: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 8, backgroundColor: '#f0fdf4', borderRadius: 10 },
+  waitingText: { color: '#15803d', fontWeight: '700', fontSize: 13 },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  emptyContainer: { alignItems: 'center', justifyContent: 'center', paddingVertical: 80 },
+  emptyTitle: { fontSize: 18, fontWeight: '700', color: '#0f172a', marginBottom: 4 },
+  emptySubtitle: { fontSize: 13, color: '#94a3b8' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.5)', justifyContent: 'center', padding: 20 },
+  modalContent: { backgroundColor: '#ffffff', borderRadius: 16, padding: 20 },
+  modalTitle: { fontSize: 18, fontWeight: '700', color: '#0f172a', marginBottom: 4 },
+  reasonOption: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  reasonText: { fontSize: 14, color: '#334155' },
+  modalBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10 },
 });

@@ -1,102 +1,130 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { Text, View, TouchableOpacity, StyleSheet } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import WaiterOrdersScreen from '../screens/WaiterOrdersScreen';
 import WaiterCallsScreen from '../screens/WaiterCallsScreen';
 import WaiterPunchScreen from '../screens/WaiterPunchScreen';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { COLORS, FONTS } from '../lib/theme';
 import { supabase } from '../lib/supabase';
+
+import { useNavigation } from '@react-navigation/native';
+import { stopAllAlarms } from '../lib/alarmManager';
 
 const Tab = createBottomTabNavigator();
 
-function WaiterSettings() {
+function AccountScreen({ route }) {
+  const navigation = useNavigation();
+  const profile = route?.params?.profile ?? {};
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Waiter Settings</Text>
-      <TouchableOpacity 
+    <SafeAreaView style={styles.accountContainer} edges={['top', 'left', 'right']}>
+      <View style={styles.avatarCircle}>
+        <Text style={styles.avatarText}>{profile.full_name?.[0]?.toUpperCase() || 'W'}</Text>
+      </View>
+      <Text style={styles.nameText}>{profile.full_name || 'Waiter Staff'}</Text>
+      <Text style={styles.emailText}>{profile.email || ''}</Text>
+
+      <View style={styles.roleBadge}>
+        <Text style={styles.roleBadgeText}>WAITER</Text>
+      </View>
+
+      <Text style={styles.footerBrand}>Powered by CleverOps · cleverops.in</Text>
+
+      <TouchableOpacity
         style={styles.signOutBtn}
-        onPress={() => supabase.auth.signOut()}
+        onPress={async () => {
+          stopAllAlarms();
+          await supabase.auth.signOut().catch(() => {});
+          navigation.replace('Login');
+        }}
+        activeOpacity={0.8}
       >
-        <Text style={styles.signOutText}>Sign Out</Text>
+        <Ionicons name="log-out-outline" size={20} color="#ef4444" style={{ marginRight: 8 }} />
+        <Text style={styles.signOutBtnText}>Sign Out</Text>
       </TouchableOpacity>
-    </View>
+    </SafeAreaView>
   );
 }
 
+const styles = StyleSheet.create({
+  accountContainer: { flex: 1, backgroundColor: '#f8fafc', alignItems: 'center', paddingTop: 40 },
+  avatarCircle: { width: 76, height: 76, borderRadius: 38, backgroundColor: COLORS.primary, alignItems: 'center', justifyContent: 'center', marginBottom: 16, elevation: 4 },
+  avatarText: { color: '#ffffff', fontSize: 32, fontWeight: '700' },
+  nameText: { fontSize: 22, fontWeight: '700', color: '#0f172a', marginBottom: 4 },
+  emailText: { fontSize: 14, color: '#64748b', marginBottom: 12 },
+  roleBadge: { backgroundColor: COLORS.primaryLight, paddingHorizontal: 16, paddingVertical: 6, borderRadius: 999, marginBottom: 40 },
+  roleBadgeText: { color: COLORS.primary, fontWeight: '700', fontSize: 12, letterSpacing: 0.8 },
+  footerBrand: { fontSize: 12, color: '#94a3b8', marginBottom: 24 },
+  signOutBtn: { width: '85%', backgroundColor: '#ffffff', paddingVertical: 14, borderRadius: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', elevation: 2, borderWidth: 1, borderColor: '#f1f5f9' },
+  signOutBtnText: { fontSize: 15, color: '#ef4444', fontWeight: '700' },
+});
+
 export default function WaiterTabNavigator({ route }) {
-  const profile = route?.params?.profile || {};
+  const profile = route?.params?.profile ?? {};
 
   return (
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
-        tabBarIcon: () => null,
-        tabBarIconStyle: { display: 'none' },
+        tabBarActiveTintColor: COLORS.primary,
+        tabBarInactiveTintColor: '#94a3b8',
         tabBarStyle: {
           backgroundColor: '#ffffff',
-          borderTopColor: '#e2e8f0',
-          height: 56,
-          paddingBottom: 16,
-          paddingTop: 12,
+          borderTopColor: '#f1f5f9',
+          borderTopWidth: 1,
+          height: 64,
+          paddingBottom: 8,
+          paddingTop: 6,
+          elevation: 12,
         },
-        tabBarActiveTintColor: '#059669',
-        tabBarInactiveTintColor: '#64748b',
-        tabBarLabelStyle: {
-          fontSize: 12,
-          fontWeight: '600',
-        },
+        tabBarLabelStyle: { ...FONTS.semiBold, fontSize: 11 },
       }}
     >
-      <Tab.Screen 
-        name="Deliveries" 
-        component={WaiterOrdersScreen} 
+      <Tab.Screen
+        name="Delivery"
+        component={WaiterOrdersScreen}
         initialParams={{ profile }}
-        options={{ tabBarLabel: 'Delivery' }}
+        options={{
+          tabBarLabel: 'Delivery',
+          tabBarIcon: ({ focused, color }) => (
+            <MaterialIcons name="delivery-dining" size={24} color={color} />
+          ),
+        }}
       />
-      <Tab.Screen 
-        name="Guest Calls" 
-        component={WaiterCallsScreen} 
+      <Tab.Screen
+        name="Calls"
+        component={WaiterCallsScreen}
         initialParams={{ profile }}
-        options={{ tabBarLabel: 'Guest Calls' }}
+        options={{
+          tabBarLabel: 'Guest Calls',
+          tabBarIcon: ({ focused, color }) => (
+            <Ionicons name={focused ? 'notifications' : 'notifications-outline'} size={22} color={color} />
+          ),
+        }}
       />
-      <Tab.Screen 
-        name="Punch Order" 
-        component={WaiterPunchScreen} 
+      <Tab.Screen
+        name="Punch"
+        component={WaiterPunchScreen}
         initialParams={{ profile }}
-        options={{ tabBarLabel: 'Punch Order' }}
+        options={{
+          tabBarLabel: 'Punch Order',
+          tabBarIcon: ({ focused, color }) => (
+            <Ionicons name={focused ? 'add-circle' : 'add-circle-outline'} size={24} color={color} />
+          ),
+        }}
       />
-      <Tab.Screen 
-        name="Settings" 
-        component={WaiterSettings} 
-        options={{ tabBarLabel: 'Settings' }}
+      <Tab.Screen
+        name="Account"
+        component={AccountScreen}
+        initialParams={{ profile }}
+        options={{
+          tabBarLabel: 'Account',
+          tabBarIcon: ({ focused, color }) => (
+            <Ionicons name={focused ? 'person' : 'person-outline'} size={22} color={color} />
+          ),
+        }}
       />
     </Tab.Navigator>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f8fafc',
-    padding: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  title: {
-    fontSize: 24,
-    color: '#0f172a',
-    marginBottom: 20,
-    fontWeight: 'bold',
-  },
-  signOutBtn: {
-    backgroundColor: '#ef4444',
-    padding: 12,
-    borderRadius: 8,
-    width: 200,
-    alignItems: 'center',
-  },
-  signOutText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: 'bold',
-  }
-});

@@ -1,14 +1,20 @@
 {
   "expo": {
-    "name": "smartdine-mobile",
-    "owner": "sam33.dh",
+    "name": "SmartDine",
+    "owner": "ad-city",
     "slug": "smartdine-mobile-app",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#059669"
+    },
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.smartdine.mobile",
       "infoPlist": {
         "UIBackgroundModes": [
           "audio",
@@ -19,16 +25,21 @@
     },
     "android": {
       "package": "com.smartdine.mobile",
+      "versionCode": 12,
       "permissions": [
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE",
         "POST_NOTIFICATIONS",
         "WAKE_LOCK",
-        "android.permission.RECORD_AUDIO",
-        "android.permission.MODIFY_AUDIO_SETTINGS"
+        "USE_FULL_SCREEN_INTENT",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
+        "android.permission.SCHEDULE_EXACT_ALARM"
       ],
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#059669",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -39,26 +50,35 @@
         "expo-notifications",
         {
           "icon": "./assets/icon.png",
-          "color": "#0ea5e9"
+          "color": "#059669",
+          "defaultChannel": "smartdine-urgent-v3",
+          "sounds": [
+            "./assets/order_tune.mp3"
+          ]
         }
       ],
-      "expo-av"
+      [
+        "expo-av",
+        {
+          "microphonePermission": false
+        }
+      ]
     ],
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "extra": {
       "eas": {
-        "projectId": "407eef68-5b75-4b63-b679-8123df863ea7"
+        "projectId": "2fb0358d-6e46-4269-996d-0614a98052e1"
       }
+    },
+    "updates": {
+      "url": "https://u.expo.dev/2fb0358d-6e46-4269-996d-0614a98052e1",
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
     },
     "runtimeVersion": {
       "policy": "appVersion"
-    },
-    "updates": {
-      "url": "https://u.expo.dev/407eef68-5b75-4b63-b679-8123df863ea7",
-      "checkAutomatically": "ON_LOAD",
-      "fallbackToCacheTimeout": 30000
     }
   }
 }

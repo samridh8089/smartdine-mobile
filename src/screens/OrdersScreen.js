@@ -1,847 +1,831 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator, Modal, TextInput } from 'react-native';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  View, Text, StyleSheet, FlatList, TouchableOpacity,
+  ActivityIndicator, ScrollView, RefreshControl, Platform,
+  Alert, TextInput, Modal, Vibration,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
-import { sendSystemAlert, registerPushToken } from '../lib/notifications';
-import { getFormattedOrderId } from '../lib/orderUtils';
-import { startAlarm, stopAlarm, isAlarmActive } from '../lib/alarmManager';
+import { startAlarm, stopAlarm, stopAllAlarms } from '../lib/alarmManager';
+import { sendLocalNotification } from '../lib/notifications';
+import {
+  COLORS, FONTS, RADIUS, SHADOWS,
+  formatCurrency, getStatusColor, getStatusLabel, timeAgo,
+} from '../lib/theme';
+import OTAUpdateBtn from '../components/OTAUpdateBtn';
 
-// Helper to consolidate items into NEW items to prepare vs PREVIOUSLY SERVED vs CANCELLED items
-function consolidateItems(itemList = [], orderStatus = '') {
-  try {
-    if (!Array.isArray(itemList) || itemList.length === 0) {
-      return { newItems: [], servedItems: [], cancelledItems: [] };
-    }
+const ORDER_STATUSES = ['all', 'new', 'accepted', 'preparing', 'ready', 'served', 'completed', 'cancelled'];
+const PENDING_OWNER_ORDERS_KEY = '@smartdine_owner_pending_orders';
 
-    const newMap = new Map();
-    const servedMap = new Map();
-    const cancelledMap = new Map();
+export default function OrdersScreen({ route }) {
+  const navigation = useNavigation();
+  const profile = route?.params?.profile ?? {};
+  const [restaurantId, setRestaurantId] = useState(
+    profile?.restaurant_id || profile?.restaurants?.id || null
+  );
+  const role = profile?.role ?? 'owner';
 
-    let latestTime = 0;
-    itemList.forEach(item => {
-      if (item?.created_at) {
-        const t = new Date(item.created_at).getTime();
-        if (!isNaN(t) && t > latestTime) latestTime = t;
-      }
-    });
-
-    itemList.forEach(item => {
-      if (!item) return;
-      const name = String(item.menu_item_name || item.name || 'Item');
-      const qty = Number(item.quantity) || 1;
-      const price = Number(item.price) || 0;
-
-      const isItemCancelled = Boolean(item.is_cancelled || item.status === 'cancelled');
-
-      if (isItemCancelled) {
-        if (cancelledMap.has(name)) {
-          cancelledMap.get(name).quantity += qty;
-        } else {
-          cancelledMap.set(name, { name, quantity: qty, price, isCancelled: true });
+  useEffect(() => {
+    async function fetchMissingRestaurantId() {
+      if (!restaurantId) {
+        try {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (user) {
+            const { data: p } = await supabase
+              .from('profiles')
+              .select('restaurant_id')
+              .eq('id', user.id)
+              .maybeSingle();
+            if (p?.restaurant_id) setRestaurantId(p.restaurant_id);
+          }
+        } catch (e) {
+          console.log('[OrdersScreen] fetch restaurant_id error:', e?.message);
         }
+      }
+    }
+    fetchMissingRestaurantId();
+  }, [restaurantId]);
+
+  const [tab, setTab] = useState('orders'); // 'orders' | 'calls'
+  const [orders, setOrders] = useState([]);
+  const [calls, setCalls] = useState([]);
+  const [selectedOrder, setSelectedOrder] = useState(null);
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [isOffline, setIsOffline] = useState(false);
+  const [pendingQueue, setPendingQueue] = useState([]);
+
+  const knownReadyIds = useRef(new Set());
+  const knownCallIds = useRef(new Set());
+
+  // Load offline queue on init
+  useEffect(() => {
+    async function loadPendingQueue() {
+      try {
+        const stored = await AsyncStorage.getItem(PENDING_OWNER_ORDERS_KEY);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setPendingQueue(parsed);
+          }
+        }
+      } catch (e) {
+        console.log('[OrdersScreen] Load pending queue error:', e?.message);
+      }
+    }
+    loadPendingQueue();
+  }, []);
+
+  const savePendingQueue = async (queue) => {
+    setPendingQueue(queue);
+    try {
+      await AsyncStorage.setItem(PENDING_OWNER_ORDERS_KEY, JSON.stringify(queue));
+    } catch (e) {
+      console.log('[OrdersScreen] Save pending queue error:', e?.message);
+    }
+  };
+
+  const loadOrders = useCallback(async () => {
+    if (!restaurantId) { setLoading(false); setRefreshing(false); return; }
+    try {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*, order_items(*), order_batches(*)')
+        .eq('restaurant_id', restaurantId)
+        .not('status', 'in', '(completed,cancelled)')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.log('Orders load DB error:', error.message);
+        setIsOffline(true);
         return;
       }
 
-      const itemTime = item.created_at ? new Date(item.created_at).getTime() : 0;
-      const isOlderBatch = (latestTime > 0 && itemTime > 0 && (latestTime - itemTime > 3000));
-      const isItemServed = Boolean(item.is_served || item.is_prepared || item.status === 'served' || item.status === 'ready' || isOlderBatch);
+      setIsOffline(false);
+      const allOrders = data || [];
+      setOrders(allOrders);
 
-      if (isItemServed) {
-        if (servedMap.has(name)) {
-          servedMap.get(name).quantity += qty;
-        } else {
-          servedMap.set(name, { name, quantity: qty, price, isServed: true });
+      // Check for ready orders -> sound alert
+      const readyOrders = allOrders.filter(o => o.status === 'ready');
+      let hasNewReady = false;
+      readyOrders.forEach(o => {
+        if (!knownReadyIds.current.has(o.id)) {
+          knownReadyIds.current.add(o.id);
+          hasNewReady = true;
         }
-      } else {
-        if (newMap.has(name)) {
-          newMap.get(name).quantity += qty;
-        } else {
-          newMap.set(name, { name, quantity: qty, price, isServed: false });
-        }
+      });
+      if (hasNewReady && ['owner', 'manager', 'waiter'].includes(role)) {
+        startAlarm('food_ready', 'Order Ready', 'Food is ready for pickup');
+        sendLocalNotification('Order Ready', 'Food is ready for pickup');
+        Vibration.vibrate([0, 500, 250, 500]);
       }
-    });
+      if (readyOrders.length === 0) stopAlarm('food_ready');
 
-    return {
-      newItems: Array.from(newMap.values()),
-      servedItems: Array.from(servedMap.values()),
-      cancelledItems: Array.from(cancelledMap.values()),
-    };
-  } catch (e) {
-    console.log('Error consolidating items:', e);
-    return { newItems: [], servedItems: [], cancelledItems: [] };
-  }
-}
-
-// Calculate grand total: SUM ONLY SERVED + ACTIVE UNLESS ORDER ITSELF IS FULLY CANCELLED WITH 0 SERVED
-function getCalculatedOrderTotal(order, newItems = [], servedItems = [], cancelledItems = []) {
-  if (!order) return 0;
-  if (order.status === 'cancelled' && servedItems.length === 0) return 0;
-
-  let total = 0;
-
-  // Always sum served items
-  servedItems.forEach(item => {
-    total += (Number(item.price) || 0) * (Number(item.quantity) || 1);
-  });
-
-  // Only sum new items if order is not fully cancelled
-  if (order.status !== 'cancelled') {
-    newItems.forEach(item => {
-      total += (Number(item.price) || 0) * (Number(item.quantity) || 1);
-    });
-  }
-
-  // Cancelled items are ALWAYS 0 towards the bill!
-
-  return total > 0 ? total : Number(order.total || 0);
-}
-
-const PRESET_CANCEL_REASONS = [
-  'Item Out of Stock',
-  'Kitchen Busy / Overflow',
-  'Customer Cancelled',
-  'Closing Soon',
-  'Incorrect Order',
-];
-
-export default function OrdersScreen({ route }) {
-  const profile = route?.params?.profile || {};
-  const restaurantId = profile?.restaurant_id || null;
-
-  const [restaurantName, setRestaurantName] = useState('Live Orders');
-  const [orders, setOrders] = useState([]);
-  const [activeTab, setActiveTab] = useState('active'); // 'active' | 'completed' | 'all'
-  const [loading, setLoading] = useState(true);
-  const knownOrderIdsRef = useRef(new Set());
-
-  // Cancellation Modal state
-  const [cancelModalVisible, setCancelModalVisible] = useState(false);
-  const [cancellingOrderId, setCancellingOrderId] = useState(null);
-  const [cancellationReason, setCancellationReason] = useState('');
-
-  useEffect(() => {
-    if (profile?.id) {
-      registerPushToken(profile.id).catch(() => {});
-    }
-    fetchRestaurantName();
-    fetchOrders();
-
-    // 1. WebSocket Realtime Subscription
-    let channel;
-    if (restaurantId) {
-      try {
-        channel = supabase
-          .channel(`live-orders-${restaurantId}`)
-          .on(
-            'postgres_changes',
-            { event: '*', schema: 'public', table: 'orders', filter: `restaurant_id=eq.${restaurantId}` },
-            (payload) => {
-              try {
-                if (payload?.eventType === 'INSERT') {
-                  startAlarm(
-                    'new_order',
-                    'NEW CUSTOMER ORDER',
-                    `Table ${payload.new?.table_name || 'N/A'} - Total: ₹${payload.new?.total || 0}`
-                  ).catch(() => {});
-                  sendSystemAlert(
-                    'NEW CUSTOMER ORDER',
-                    `Table ${payload.new?.table_name || 'N/A'} - Total: ₹${payload.new?.total || 0}`
-                  ).catch(() => {});
-                }
-              } catch (_) {}
-              fetchOrders();
-            }
-          )
-          .subscribe();
-      } catch (e) {
-        console.log('Realtime subscribe error:', e);
-      }
-    }
-
-    // 2. High-Frequency 3-Second Polling
-    const interval = setInterval(() => {
-      fetchOrders(true);
-    }, 3000);
-
-    return () => {
-      if (channel) {
-        try { supabase.removeChannel(channel); } catch (_) {}
-      }
-      if (interval) clearInterval(interval);
-      try { stopAlarm(); } catch (_) {}
-    };
-  }, [restaurantId]);
-
-  // Auto-trigger continuous alarm whenever there is an unattended new order or food ready to serve
-  useEffect(() => {
-    if (!orders || orders.length === 0) {
-      stopAlarm();
-      return;
-    }
-
-    const hasUnattended = orders.some(o => 
-      o.status === 'new' || o.status === 'ready' || (o.batches || []).some(b => b.status === 'new' || b.status === 'ready')
-    );
-
-    if (hasUnattended) {
-      const target = orders.find(o => o.status === 'new' || o.status === 'ready' || (o.batches || []).some(b => b.status === 'new' || b.status === 'ready'));
-      startAlarm(
-        'waiter_order',
-        target?.status === 'ready' ? 'FOOD READY TO SERVE' : 'NEW ORDER RECEIVED',
-        `Table ${target?.table_name || 'N/A'} - Total: ₹${target?.total || 0}`
-      );
-    } else {
-      stopAlarm();
-    }
-  }, [orders]);
-
-  const fetchRestaurantName = async () => {
-    if (!restaurantId) return;
-    try {
-      const { data } = await supabase
-        .from('restaurants')
-        .select('name')
-        .eq('id', restaurantId)
-        .single();
-      if (data?.name) {
-        setRestaurantName(`${data.name} - Orders`);
-      }
     } catch (e) {
-      console.log('Error fetching restaurant name:', e);
-    }
-  };
-
-  const fetchOrders = async (isBackgroundPoll = false) => {
-    try {
-      let query = supabase
-        .from('orders')
-        .select('*, order_items(*)')
-        .order('created_at', { ascending: false });
-
-      if (restaurantId) {
-        query = query.eq('restaurant_id', restaurantId);
-      }
-
-      const { data, error } = await query;
-      if (!error && Array.isArray(data)) {
-        if (isBackgroundPoll) {
-          data.forEach(ord => {
-            if (ord?.id && !knownOrderIdsRef.current.has(ord.id)) {
-              knownOrderIdsRef.current.add(ord.id);
-              if (ord.status === 'new') {
-                startAlarm(
-                  'new_order',
-                  'NEW CUSTOMER ORDER',
-                  `Table ${ord.table_name || 'N/A'} - Total: ₹${ord.total || 0}`
-                ).catch(() => {});
-                sendSystemAlert(
-                  'NEW CUSTOMER ORDER',
-                  `Table ${ord.table_name || 'N/A'} - Total: ₹${ord.total || 0}`
-                ).catch(() => {});
-              }
-            }
-          });
-        } else {
-          data.forEach(ord => { if (ord?.id) knownOrderIdsRef.current.add(ord.id); });
-        }
-
-        setOrders(data);
-      }
-    } catch (e) {
-      console.log('Error fetching orders:', e);
+      console.log('Orders load catch error:', e?.message);
+      setIsOffline(true);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
+  }, [restaurantId, role]);
 
-  const updateStatus = async (id, status) => {
+  const loadCalls = useCallback(async () => {
+    if (!restaurantId) return;
     try {
-      const staffName = profile?.full_name || profile?.role || 'Staff';
-      const updatePayload = {
-        status,
-        updated_at: new Date().toISOString()
-      };
+      const { data, error } = await supabase
+        .from('customer_requests')
+        .select('*')
+        .eq('restaurant_id', restaurantId)
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false });
 
-      // When marking completed, auto-mark payment as paid at the same time (1-click completion & payment verification)
-      if (status === 'completed') {
-        updatePayload.payment_status = 'paid';
-        updatePayload.paid_at = new Date().toISOString();
-        updatePayload.marked_paid_by = staffName;
-        updatePayload.completed_at = new Date().toISOString();
-        updatePayload.completed_by = staffName;
+      if (error) {
+        console.log('Calls load error:', error.message);
+        setIsOffline(true);
+        return;
       }
 
-      const { error } = await supabase
-        .from('orders')
-        .update(updatePayload)
-        .eq('id', id);
+      const allCalls = data || [];
+      setCalls(allCalls);
 
-      if (!error) {
-        if (['ready', 'served', 'completed'].includes(status)) {
-          try {
-            await supabase
-              .from('order_items')
-              .update({ is_served: true, status: 'served' })
-              .eq('order_id', id)
-              .neq('status', 'cancelled');
-          } catch (_) {}
-
-          try {
-            await supabase
-              .from('order_batches')
-              .update({ status: status === 'completed' ? 'served' : status, updated_at: new Date().toISOString() })
-              .eq('order_id', id)
-              .neq('status', 'cancelled');
-          } catch (_) {}
+      let hasNew = false;
+      allCalls.forEach(c => {
+        if (!knownCallIds.current.has(c.id)) {
+          knownCallIds.current.add(c.id);
+          hasNew = true;
         }
-
-        if (['accepted', 'preparing', 'completed', 'served'].includes(status)) {
-          stopAlarm().catch(() => {});
-        }
-        fetchOrders();
-      } else {
-        Alert.alert('Error', error.message);
+      });
+      if (hasNew && ['owner', 'manager', 'waiter'].includes(role)) {
+        startAlarm('waiter_call', 'Customer Call', 'A customer needs assistance');
+        sendLocalNotification('Customer Call', 'A customer needs assistance');
+        Vibration.vibrate([0, 300, 200, 300]);
       }
+      if (allCalls.length === 0) stopAlarm('waiter_call');
     } catch (e) {
-      Alert.alert('Error', 'Failed to update order status');
+      console.log('Calls load catch error:', e?.message);
     }
-  };
+  }, [restaurantId, role]);
 
-  const handleConfirmCancel = async () => {
-    if (!cancellingOrderId) return;
-
-    try {
-      const cancellerName = profile?.full_name || profile?.role || 'Staff';
-      const reasonText = cancellationReason || 'Cancelled by staff';
-
-      const targetOrder = (orders || []).find(o => o.id === cancellingOrderId);
-      const items = targetOrder?.order_items || [];
-
-      let latestTime = 0;
-      items.forEach(item => {
-        if (item?.created_at) {
-          const t = new Date(item.created_at).getTime();
-          if (!isNaN(t) && t > latestTime) latestTime = t;
-        }
-      });
-
-      const hasServedItems = items.some(item => {
-        const itemTime = item?.created_at ? new Date(item.created_at).getTime() : 0;
-        const isOlderBatch = (latestTime > 0 && itemTime > 0 && (latestTime - itemTime > 3000));
-        return Boolean(item?.is_served || item?.is_prepared || item?.status === 'served' || item?.status === 'ready' || isOlderBatch);
-      });
-
-      if (hasServedItems) {
-        const servedTotal = items.reduce((sum, item) => {
-          const itemTime = item?.created_at ? new Date(item.created_at).getTime() : 0;
-          const isOlderBatch = (latestTime > 0 && itemTime > 0 && (latestTime - itemTime > 3000));
-          const isServed = Boolean(item?.is_served || item?.is_prepared || item?.status === 'served' || item?.status === 'ready' || isOlderBatch);
-          if (isServed && !item?.is_cancelled && item?.status !== 'cancelled') {
-            return sum + ((Number(item.price) || 0) * (Number(item.quantity) || 1));
+  // Flush pending queue when online
+  const flushPendingQueue = useCallback(async () => {
+    if (pendingQueue.length === 0) return;
+    console.log(`[OrdersScreen] Retrying ${pendingQueue.length} queued offline actions...`);
+    const remaining = [];
+    for (const item of pendingQueue) {
+      try {
+        if (item.type === 'update_order_status') {
+          const updates = { status: item.newStatus };
+          if (item.newStatus === 'completed') updates.payment_status = 'paid';
+          await supabase.from('orders').update(updates).eq('id', item.orderId);
+          if (['accepted', 'preparing', 'ready', 'completed'].includes(item.newStatus)) {
+            await supabase.from('order_batches').update({ status: item.newStatus }).eq('order_id', item.orderId);
           }
-          return sum;
-        }, 0);
+        } else if (item.type === 'cancel_order') {
+          await supabase.from('orders').update({ status: 'cancelled', cancel_reason: item.cancelReason }).eq('id', item.orderId);
+          await supabase.from('order_batches').update({ status: 'cancelled' }).eq('order_id', item.orderId);
+        }
+      } catch (err) {
+        console.log('[OrdersScreen] Failed retrying pending action:', err?.message);
+        remaining.push(item);
+      }
+    }
+    await savePendingQueue(remaining);
+    await loadOrders();
+  }, [pendingQueue, loadOrders]);
 
-        try {
-          await supabase
-            .from('order_batches')
-            .update({ status: 'cancelled', updated_at: new Date().toISOString() })
-            .eq('order_id', cancellingOrderId)
-            .neq('status', 'served');
-        } catch (_) {}
+  useEffect(() => {
+    if (!isOffline && pendingQueue.length > 0) {
+      flushPendingQueue();
+    }
+  }, [isOffline, pendingQueue, flushPendingQueue]);
 
-        try {
-          await supabase
-            .from('order_items')
-            .update({ is_cancelled: true, status: 'cancelled' })
-            .eq('order_id', cancellingOrderId)
-            .eq('is_served', false);
-        } catch (_) {}
+  useEffect(() => {
+    loadOrders();
+    loadCalls();
 
+    if (!restaurantId) return;
+    const channel = supabase
+      .channel(`orders-screen-realtime-${restaurantId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `restaurant_id=eq.${restaurantId}` }, loadOrders)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_batches', filter: `restaurant_id=eq.${restaurantId}` }, loadOrders)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'customer_requests', filter: `restaurant_id=eq.${restaurantId}` }, loadCalls)
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          setIsOffline(false);
+        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          setIsOffline(true);
+        }
+      });
+
+    const timer = setInterval(() => {
+      loadOrders();
+      loadCalls();
+    }, 8000);
+
+    return () => {
+      stopAllAlarms();
+      Vibration.cancel();
+      clearInterval(timer);
+      supabase.removeChannel(channel);
+    };
+  }, [restaurantId, loadOrders, loadCalls]);
+
+  const updateOrderStatus = async (orderId, newStatus) => {
+    setActionLoading(true);
+    try {
+      const updates = { status: newStatus };
+      if (newStatus === 'completed') updates.payment_status = 'paid';
+
+      const { error } = await supabase
+        .from('orders')
+        .update(updates)
+        .eq('id', orderId);
+
+      if (error) throw error;
+
+      // Update batches if needed
+      if (['accepted', 'preparing', 'ready', 'completed'].includes(newStatus)) {
         await supabase
-          .from('orders')
-          .update({
-            status: 'served',
-            subtotal: servedTotal,
-            total: servedTotal,
-            cancelled_by: cancellerName,
-            cancellation_reason: reasonText,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', cancellingOrderId);
-      } else {
-        await supabase
-          .from('orders')
-          .update({
-            status: 'cancelled',
-            cancelled_by: cancellerName,
-            cancellation_reason: reasonText,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', cancellingOrderId);
+          .from('order_batches')
+          .update({ status: newStatus })
+          .eq('order_id', orderId);
       }
 
-      stopAlarm().catch(() => {});
-      setCancelModalVisible(false);
-      setCancellingOrderId(null);
-      setCancellationReason('');
-      fetchOrders();
+      await loadOrders();
+      if (selectedOrder?.id === orderId) {
+        setSelectedOrder(prev => prev ? { ...prev, status: newStatus } : null);
+      }
     } catch (e) {
-      Alert.alert('Error', 'Failed to cancel order');
+      Alert.alert('Error', e.message || 'Could not update order status');
+    } finally {
+      setActionLoading(false);
     }
   };
 
-  const updatePaymentStatus = async (id, paymentStatus) => {
+  const cancelOrder = async (orderId) => {
+    if (!orderId) return;
+    setActionLoading(true);
     try {
       const { error } = await supabase
         .from('orders')
-        .update({ payment_status: paymentStatus, updated_at: new Date().toISOString() })
-        .eq('id', id);
+        .update({
+          status: 'cancelled',
+          cancel_reason: cancelReason || 'Cancelled by staff',
+        })
+        .eq('id', orderId);
 
-      if (!error) {
-        fetchOrders();
-      } else {
-        Alert.alert('Error', error.message);
-      }
+      if (error) throw error;
+
+      await supabase
+        .from('order_batches')
+        .update({ status: 'cancelled' })
+        .eq('order_id', orderId);
+
+      setShowCancelModal(false);
+      setCancelReason('');
+      setSelectedOrder(null);
+      await loadOrders();
     } catch (e) {
-      Alert.alert('Error', 'Failed to update payment status');
+      Alert.alert('Error', e.message || 'Could not cancel order');
+    } finally {
+      setActionLoading(false);
     }
   };
 
-  const safeOrders = orders || [];
-  const activeOrders = safeOrders.filter(o => ['new', 'accepted', 'preparing', 'ready', 'served'].includes(o?.status));
-  const completedOrders = safeOrders.filter(o => ['completed', 'cancelled'].includes(o?.status));
+  const resolveCall = async (callId) => {
+    try {
+      await supabase
+        .from('customer_requests')
+        .update({ status: 'completed' })
+        .eq('id', callId);
+      stopAlarm('waiter_call');
+      Vibration.cancel();
+      await loadCalls();
+    } catch (e) {
+      Alert.alert('Error', 'Failed to resolve call');
+    }
+  };
 
-  const displayedOrders = 
-    activeTab === 'active' ? activeOrders :
-    activeTab === 'completed' ? completedOrders : safeOrders;
+  const getItemName = (item) => {
+    return item.name || item.item_name || item.menu_items?.name || 'Item';
+  };
 
-  return (
-    <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.title}>{restaurantName}</Text>
-          <Text style={styles.subtitle}>Owner & Management Portal</Text>
-        </View>
+  const getItemsSummaryText = (items) => {
+    if (!items || !items.length) return 'No items';
+    return items.map(i => `${getItemName(i)} x${i.quantity || 1}`).join(', ');
+  };
 
-        {isAlarmActive() && (
-          <TouchableOpacity onPress={() => stopAlarm().catch(() => {})} style={styles.stopAlarmBtn}>
-            <Text style={styles.stopAlarmText}>STOP ALARM</Text>
+  // Filter orders
+  const filteredOrders = orders.filter(o => {
+    const matchStatus = statusFilter === 'all' || o.status === statusFilter;
+    const itemsSummary = getItemsSummaryText(o.order_items).toLowerCase();
+    const tableName = (o.table_name || `Table ${o.table_id || ''}`).toLowerCase();
+    const q = search.toLowerCase().trim();
+    const matchSearch = !q || tableName.includes(q) || itemsSummary.includes(q);
+    const matchRole = role !== 'waiter' || ['ready', 'served'].includes(o.status);
+    return matchStatus && matchSearch && matchRole;
+  });
+
+  const getActionButtons = (order) => {
+    if (!order) return null;
+    const s = order.status;
+
+    return (
+      <View style={styles.actionRow}>
+        {s === 'new' && (
+          <TouchableOpacity
+            style={[styles.btn, { backgroundColor: COLORS.primary }]}
+            disabled={actionLoading}
+            onPress={() => updateOrderStatus(order.id, 'accepted')}
+          >
+            <Ionicons name="checkmark-circle-outline" size={18} color="#fff" style={{ marginRight: 6 }} />
+            <Text style={styles.btnText}>Accept Order</Text>
+          </TouchableOpacity>
+        )}
+
+        {s === 'accepted' && (
+          <TouchableOpacity
+            style={[styles.btn, { backgroundColor: '#3b82f6' }]}
+            disabled={actionLoading}
+            onPress={() => updateOrderStatus(order.id, 'preparing')}
+          >
+            <Ionicons name="restaurant-outline" size={18} color="#fff" style={{ marginRight: 6 }} />
+            <Text style={styles.btnText}>Start Preparing</Text>
+          </TouchableOpacity>
+        )}
+
+        {s === 'preparing' && (
+          <TouchableOpacity
+            style={[styles.btn, { backgroundColor: '#8b5cf6' }]}
+            disabled={actionLoading}
+            onPress={() => updateOrderStatus(order.id, 'ready')}
+          >
+            <Ionicons name="alarm-outline" size={18} color="#fff" style={{ marginRight: 6 }} />
+            <Text style={styles.btnText}>Mark Ready</Text>
+          </TouchableOpacity>
+        )}
+
+        {s === 'ready' && (
+          <TouchableOpacity
+            style={[styles.btn, { backgroundColor: '#06b6d4' }]}
+            disabled={actionLoading}
+            onPress={() => updateOrderStatus(order.id, 'served')}
+          >
+            <Ionicons name="checkmark-done-outline" size={18} color="#fff" style={{ marginRight: 6 }} />
+            <Text style={styles.btnText}>Mark Served</Text>
+          </TouchableOpacity>
+        )}
+
+        {['served', 'ready'].includes(s) && ['owner', 'manager', 'cashier'].includes(role) && (
+          <TouchableOpacity
+            style={[styles.btn, { backgroundColor: COLORS.primary }]}
+            disabled={actionLoading}
+            onPress={() => updateOrderStatus(order.id, 'completed')}
+          >
+            <Ionicons name="cash-outline" size={18} color="#fff" style={{ marginRight: 6 }} />
+            <Text style={styles.btnText}>Complete & Pay</Text>
+          </TouchableOpacity>
+        )}
+
+        {['new', 'accepted'].includes(s) && (
+          <TouchableOpacity
+            style={[styles.btn, { backgroundColor: '#ef4444', marginTop: 8 }]}
+            disabled={actionLoading}
+            onPress={() => setShowCancelModal(true)}
+          >
+            <Ionicons name="close-circle-outline" size={18} color="#fff" style={{ marginRight: 6 }} />
+            <Text style={styles.btnText}>Cancel Order</Text>
           </TouchableOpacity>
         )}
       </View>
+    );
+  };
 
-      {/* Tabs */}
-      <View style={styles.tabsContainer}>
-        <TouchableOpacity 
-          style={[styles.tab, activeTab === 'active' && styles.activeTab]}
-          onPress={() => setActiveTab('active')}
-        >
-          <Text style={[styles.tabText, activeTab === 'active' && styles.activeTabText]}>
-            Active ({activeOrders.length})
-          </Text>
-        </TouchableOpacity>
+  const renderOrderItem = ({ item }) => {
+    const statusColor = getStatusColor(item.status);
+    const items = item.order_items || [];
+    const tableName = item.table_name || (item.order_type === 'takeaway' ? 'Takeaway' : `Table ${item.table_id || ''}`);
 
-        <TouchableOpacity 
-          style={[styles.tab, activeTab === 'completed' && styles.activeTab]}
-          onPress={() => setActiveTab('completed')}
-        >
-          <Text style={[styles.tabText, activeTab === 'completed' && styles.activeTabText]}>
-            History ({completedOrders.length})
-          </Text>
-        </TouchableOpacity>
+    return (
+      <TouchableOpacity
+        style={styles.orderCard}
+        onPress={() => setSelectedOrder(item)}
+        activeOpacity={0.7}
+      >
+        <View style={styles.cardHeader}>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Ionicons
+              name={item.order_type === 'takeaway' ? 'bag-handle-outline' : 'restaurant-outline'}
+              size={18}
+              color={COLORS.textDark}
+              style={{ marginRight: 6 }}
+            />
+            <Text style={styles.tableName}>{tableName}</Text>
+          </View>
 
-        <TouchableOpacity 
-          style={[styles.tab, activeTab === 'all' && styles.activeTab]}
-          onPress={() => setActiveTab('all')}
-        >
-          <Text style={[styles.tabText, activeTab === 'all' && styles.activeTabText]}>
-            All ({safeOrders.length})
-          </Text>
-        </TouchableOpacity>
+          <View style={[styles.statusBadge, { backgroundColor: statusColor + '20' }]}>
+            <Text style={[styles.statusBadgeText, { color: statusColor }]}>
+              {getStatusLabel(item.status)}
+            </Text>
+          </View>
+        </View>
+
+        <Text style={styles.itemsSummary} numberOfLines={2}>
+          {getItemsSummaryText(items)}
+        </Text>
+
+        <View style={styles.cardFooter}>
+          <Text style={styles.timeAgoText}>{timeAgo(item.created_at)}</Text>
+          <Text style={styles.priceText}>{formatCurrency(item.total || 0)}</Text>
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  return (
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+      {/* Top Header */}
+      <View style={styles.header}>
+        <Text style={styles.title}>Live Orders</Text>
+
+        {/* Tab Switcher */}
+        <View style={styles.tabContainer}>
+          <TouchableOpacity
+            style={[styles.tabBtn, tab === 'orders' && styles.tabBtnActive]}
+            onPress={() => setTab('orders')}
+          >
+            <Text style={[styles.tabText, tab === 'orders' && styles.tabTextActive]}>
+              Orders ({orders.length})
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.tabBtn, tab === 'calls' && styles.tabBtnActive]}
+            onPress={() => setTab('calls')}
+          >
+            <Text style={[styles.tabText, tab === 'calls' && styles.tabTextActive]}>
+              Calls {calls.length > 0 ? `(${calls.length})` : ''}
+            </Text>
+            {calls.length > 0 && <View style={styles.callDot} />}
+          </TouchableOpacity>
+        </View>
       </View>
 
-      {/* Content */}
-      {loading ? (
-        <View style={styles.loadingBox}>
-          <ActivityIndicator size="large" color="#0ea5e9" />
-          <Text style={styles.loadingText}>Loading live orders...</Text>
+      {/* Offline Connectivity Banner */}
+      {isOffline && (
+        <View style={styles.offlineBanner}>
+          <Ionicons name="wifi-outline" size={16} color="#ffffff" style={{ marginRight: 8 }} />
+          <Text style={styles.offlineBannerText}>
+            ⚡ Offline mode — Changes will auto-sync on reconnect {pendingQueue.length > 0 ? `(${pendingQueue.length} pending)` : ''}
+          </Text>
         </View>
-      ) : (
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          {displayedOrders.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyText}>No orders found in this section.</Text>
-            </View>
-          ) : (
-            displayedOrders.map((order) => {
-              if (!order || !order.id) return null;
-
-              let newItems = [];
-              let servedItems = [];
-              let cancelledItems = [];
-              let newCount = 0;
-              let servedCount = 0;
-              let cancelledCount = 0;
-              let grandTotal = 0;
-
-              try {
-                const res = consolidateItems(order.order_items || [], order.status);
-                newItems = res.newItems || [];
-                servedItems = res.servedItems || [];
-                cancelledItems = res.cancelledItems || [];
-                newCount = newItems.reduce((s, i) => s + i.quantity, 0);
-                servedCount = servedItems.reduce((s, i) => s + i.quantity, 0);
-                cancelledCount = cancelledItems.reduce((s, i) => s + i.quantity, 0);
-                grandTotal = getCalculatedOrderTotal(order, newItems, servedItems, cancelledItems);
-              } catch (_) {}
-
-              return (
-                <View key={order.id} style={styles.orderCard}>
-                  {/* Order Top Header */}
-                  <View style={styles.cardHeader}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <Text style={styles.tableName}>Table: {order.table_name || 'N/A'}</Text>
-                      {order.order_type === 'takeaway' && (
-                        <View style={styles.takeawayBadge}>
-                          <Text style={styles.takeawayText}>Takeaway</Text>
-                        </View>
-                      )}
-                    </View>
-
-                    <View style={[styles.statusBadge, { backgroundColor: getStatusColor(order.status) }]}>
-                      <Text style={styles.statusText}>{(order.status || 'NEW').toUpperCase()}</Text>
-                    </View>
-                  </View>
-
-                  <Text style={styles.metaText}>
-                    Order {getFormattedOrderId(order, restaurantName, safeOrders)} • Time: {order.created_at ? new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A'}
-                  </Text>
-
-                  {/* Cancellation Details Banner */}
-                  {(order.status === 'cancelled' || order.cancellation_reason) && (
-                    <View style={styles.cancelledBanner}>
-                      <Text style={styles.cancelledTitle}>
-                        {order.status === 'cancelled' ? 'Order Cancelled' : 'Reorder Batch Cancelled'}
-                      </Text>
-                      {order.cancelled_by ? <Text style={styles.cancelledSub}>• Cancelled By: {order.cancelled_by}</Text> : null}
-                      {order.cancellation_reason ? <Text style={styles.cancelledSub}>• Reason: "{order.cancellation_reason}"</Text> : null}
-                    </View>
-                  )}
-
-                  {/* Payment Verification Banner */}
-                  {order.payment_status === 'customer_marked_paid' && order.status !== 'cancelled' && (
-                    <View style={styles.paymentAlert}>
-                      <Text style={styles.paymentAlertText}>Customer marked payment as complete!</Text>
-                      <TouchableOpacity 
-                        style={styles.verifyBtn}
-                        onPress={() => updatePaymentStatus(order.id, 'paid')}
-                      >
-                        <Text style={styles.verifyBtnText}>Verify & Confirm Paid</Text>
-                      </TouchableOpacity>
-                    </View>
-                  )}
-
-                  {/* Items Breakdown Box */}
-                  <View style={styles.itemsBox}>
-                    {/* 1. TOP SECTION: NEW ITEMS TO PREPARE */}
-                    {newItems.length > 0 ? (
-                      <View style={{ marginBottom: (servedItems.length > 0 || cancelledItems.length > 0) ? 10 : 0 }}>
-                        <View style={styles.newHeaderRow}>
-                          <Text style={styles.itemsHeaderTitle}>ITEMS TO PREPARE ({newCount}):</Text>
-                          <View style={styles.newTagBadge}>
-                            <Text style={styles.newTagText}>NEW ITEMS</Text>
-                          </View>
-                        </View>
-
-                        {newItems.map((item, i) => (
-                          <View key={`new_${i}`} style={styles.itemRow}>
-                            <Text style={styles.itemQty}>{item.quantity}x</Text>
-                            <Text style={styles.itemName}>{item.name}</Text>
-                            <Text style={styles.itemPrice}>₹{(item.price * item.quantity).toFixed(2)}</Text>
-                          </View>
-                        ))}
-                      </View>
-                    ) : (
-                      <Text style={styles.itemsHeaderTitle}>
-                        {servedCount > 0 ? `ALL ACTIVE ITEMS PREPARED (${servedCount}):` : `ITEMS (${newCount + servedCount}):`}
-                      </Text>
-                    )}
-
-                    {/* 2. MIDDLE SECTION: PREVIOUSLY SERVED ITEMS */}
-                    {servedItems.length > 0 && (
-                      <View style={styles.servedSection}>
-                        <Text style={styles.servedHeaderTitle}>PREVIOUSLY SERVED ({servedCount}):</Text>
-                        {servedItems.map((item, i) => (
-                          <View key={`served_${i}`} style={styles.itemRowServed}>
-                            <Text style={styles.itemQtyServed}>{item.quantity}x</Text>
-                            <Text style={styles.itemNameServed}>{item.name}</Text>
-                            <View style={styles.servedCheckBadge}>
-                              <Text style={styles.servedCheckText}>✓ Served</Text>
-                            </View>
-                            <Text style={styles.itemPriceServed}>₹{(item.price * item.quantity).toFixed(2)}</Text>
-                          </View>
-                        ))}
-                      </View>
-                    )}
-
-                    {/* 3. BOTTOM SECTION: CANCELLED ITEMS */}
-                    {cancelledItems.length > 0 && (
-                      <View style={styles.cancelledSection}>
-                        <Text style={styles.cancelledHeaderTitle}>CANCELLED BY KITCHEN ({cancelledCount}):</Text>
-                        {cancelledItems.map((item, i) => (
-                          <View key={`can_${i}`} style={styles.itemRowCancelled}>
-                            <Text style={styles.itemQtyCancelled}>{item.quantity}x</Text>
-                            <Text style={styles.itemNameCancelled}>{item.name}</Text>
-                            <View style={styles.cancelledTagBadge}>
-                              <Text style={styles.cancelledTagText}>Cancelled</Text>
-                            </View>
-                            <Text style={styles.itemPriceCancelled}>₹0.00</Text>
-                          </View>
-                        ))}
-                      </View>
-                    )}
-
-                    <View style={styles.divider} />
-                    <View style={styles.summaryRow}>
-                      <Text style={styles.grandTotalLabel}>Grand Total (Served Items):</Text>
-                      <Text style={styles.grandTotalValue}>₹{grandTotal.toFixed(2)}</Text>
-                    </View>
-                  </View>
-
-                  {/* Action Buttons */}
-                  <View style={styles.actions}>
-                    {/* NEW ORDER FLOW: Only Accept and Reject */}
-                    {order.status === 'new' && (
-                      <>
-                        <TouchableOpacity 
-                          style={[styles.actionBtn, { backgroundColor: '#059669' }]}
-                          onPress={() => updateStatus(order.id, 'accepted')}
-                        >
-                          <Text style={styles.actionBtnText}>Accept Order</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity 
-                          style={[styles.actionBtn, { backgroundColor: '#ef4444' }]}
-                          onPress={() => {
-                            setCancellingOrderId(order.id);
-                            setCancellationReason('');
-                            setCancelModalVisible(true);
-                          }}
-                        >
-                          <Text style={styles.actionBtnText}>Reject</Text>
-                        </TouchableOpacity>
-                      </>
-                    )}
-
-                    {/* ACCEPTED FLOW: Only Start Preparing and Cancel */}
-                    {order.status === 'accepted' && (
-                      <>
-                        <TouchableOpacity 
-                          style={[styles.actionBtn, { backgroundColor: '#3b82f6' }]}
-                          onPress={() => updateStatus(order.id, 'preparing')}
-                        >
-                          <Text style={styles.actionBtnText}>Start Preparing</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity 
-                          style={[styles.actionBtn, { backgroundColor: '#ef4444' }]}
-                          onPress={() => {
-                            setCancellingOrderId(order.id);
-                            setCancellationReason('');
-                            setCancelModalVisible(true);
-                          }}
-                        >
-                          <Text style={styles.actionBtnText}>Cancel</Text>
-                        </TouchableOpacity>
-                      </>
-                    )}
-
-                    {/* PREPARING FLOW: Only Complete & Close and Cancel */}
-                    {order.status === 'preparing' && (
-                      <>
-                        <TouchableOpacity 
-                          style={[styles.actionBtn, { backgroundColor: '#10b981' }]}
-                          onPress={() => updateStatus(order.id, 'completed')}
-                        >
-                          <Text style={styles.actionBtnText}>Complete & Close</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity 
-                          style={[styles.actionBtn, { backgroundColor: '#ef4444' }]}
-                          onPress={() => {
-                            setCancellingOrderId(order.id);
-                            setCancellationReason('');
-                            setCancelModalVisible(true);
-                          }}
-                        >
-                          <Text style={styles.actionBtnText}>Cancel</Text>
-                        </TouchableOpacity>
-                      </>
-                    )}
-
-                    {/* READY, SERVED: Only Complete button, NO Cancel */}
-                    {(order.status === 'ready' || order.status === 'served') && (
-                      <TouchableOpacity 
-                        style={[styles.actionBtn, { backgroundColor: '#10b981' }]}
-                        onPress={() => updateStatus(order.id, 'completed')}
-                      >
-                        <Text style={styles.actionBtnText}>Complete & Close</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                </View>
-              );
-            })
-          )}
-        </ScrollView>
       )}
 
-      {/* Cancellation Modal */}
-      <Modal visible={cancelModalVisible} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>Select Cancellation Reason</Text>
-            
-            <Text style={styles.presetLabel}>QUICK REASONS:</Text>
-            <View style={styles.presetContainer}>
-              {PRESET_CANCEL_REASONS.map((preset, idx) => (
-                <TouchableOpacity
-                  key={idx}
-                  style={[
-                    styles.presetChip,
-                    cancellationReason === preset && styles.presetChipActive
-                  ]}
-                  onPress={() => setCancellationReason(preset)}
-                >
-                  <Text style={[
-                    styles.presetChipText,
-                    cancellationReason === preset && styles.presetChipTextActive
-                  ]}>
-                    {preset}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+      {tab === 'orders' ? (
+        <View style={{ flex: 1 }}>
+          {/* Search Box */}
+          <View style={styles.searchBox}>
+            <Ionicons name="search-outline" size={18} color="#94a3b8" style={{ marginRight: 8 }} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search table or item..."
+              placeholderTextColor="#94a3b8"
+              value={search}
+              onChangeText={setSearch}
+            />
+            {search.length > 0 && (
+              <TouchableOpacity onPress={() => setSearch('')}>
+                <Ionicons name="close-circle" size={18} color="#94a3b8" />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* Horizontal Status Chips */}
+          <View style={styles.chipContainer}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.chipScroll}
+            >
+              {ORDER_STATUSES.map(st => {
+                const active = statusFilter === st;
+                return (
+                  <TouchableOpacity
+                    key={st}
+                    style={[styles.chip, active && styles.chipActive]}
+                    onPress={() => setStatusFilter(st)}
+                  >
+                    <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                      {st.charAt(0).toUpperCase() + st.slice(1)}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+
+          {/* Orders List */}
+          {loading && !refreshing ? (
+            <View style={styles.center}>
+              <ActivityIndicator size="large" color={COLORS.primary} />
             </View>
+          ) : (
+            <FlatList
+              data={filteredOrders}
+              keyExtractor={item => item.id}
+              renderItem={renderOrderItem}
+              contentContainerStyle={styles.listContent}
+              refreshControl={
+                <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadOrders(); loadCalls(); }} />
+              }
+              ListEmptyComponent={
+                <View style={styles.emptyContainer}>
+                  <Ionicons name="receipt-outline" size={48} color="#cbd5e1" style={{ marginBottom: 12 }} />
+                  <Text style={styles.emptyText}>No orders found</Text>
+                </View>
+              }
+            />
+          )}
+        </View>
+      ) : (
+        /* Calls Tab */
+        <FlatList
+          data={calls}
+          keyExtractor={item => item.id}
+          contentContainerStyle={styles.listContent}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadCalls(); }} />
+          }
+          renderItem={({ item }) => (
+            <View style={styles.callCard}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <View style={styles.callIconBg}>
+                  <Ionicons
+                    name={item.request_type === 'bill' ? 'card-outline' : 'notifications-outline'}
+                    size={22}
+                    color={COLORS.primary}
+                  />
+                </View>
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={styles.callTableName}>{item.table_name || `Table ${item.table_id || ''}`}</Text>
+                  <Text style={styles.callTypeText}>
+                    {item.request_type === 'bill' ? 'Requested Bill Payment' : 'Called Waiter for Help'}
+                  </Text>
+                  <Text style={styles.timeAgoText}>{timeAgo(item.created_at)}</Text>
+                </View>
+              </View>
+
+              <TouchableOpacity
+                style={styles.resolveBtn}
+                onPress={() => resolveCall(item.id)}
+              >
+                <Ionicons name="checkmark-outline" size={18} color="#fff" style={{ marginRight: 4 }} />
+                <Text style={styles.resolveBtnText}>Done</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Ionicons name="checkmark-circle-outline" size={48} color="#cbd5e1" style={{ marginBottom: 12 }} />
+              <Text style={styles.emptyText}>No pending customer calls</Text>
+            </View>
+          }
+        />
+      )}
+
+      {/* Order Detail Modal */}
+      {selectedOrder && (
+        <Modal
+          visible={!!selectedOrder}
+          animationType="slide"
+          transparent
+          onRequestClose={() => setSelectedOrder(null)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <View style={styles.modalHeader}>
+                <View>
+                  <Text style={styles.modalTitle}>
+                    {selectedOrder.table_name || (selectedOrder.order_type === 'takeaway' ? 'Takeaway' : `Table ${selectedOrder.table_id || ''}`)}
+                  </Text>
+                  <Text style={styles.modalTime}>{timeAgo(selectedOrder.created_at)}</Text>
+                </View>
+
+                <TouchableOpacity onPress={() => setSelectedOrder(null)}>
+                  <Ionicons name="close" size={24} color="#64748b" />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView style={{ maxHeight: 300, marginVertical: 12 }}>
+                <Text style={styles.sectionLabel}>ORDER ITEMS</Text>
+                {(selectedOrder.order_items || []).map((item, idx) => (
+                  <View key={idx} style={styles.itemRow}>
+                    <Text style={styles.itemName}>{getItemName(item)}</Text>
+                    <Text style={styles.itemQty}>x{item.quantity || 1}</Text>
+                    <Text style={styles.itemPrice}>{formatCurrency((item.price || 0) * (item.quantity || 1))}</Text>
+                  </View>
+                ))}
+              </ScrollView>
+
+              <View style={styles.modalTotalRow}>
+                <Text style={styles.totalLabel}>Total Amount</Text>
+                <Text style={styles.totalValue}>{formatCurrency(selectedOrder.total || 0)}</Text>
+              </View>
+
+              <View style={styles.paymentBadgeRow}>
+                <View style={[
+                  styles.payBadge,
+                  { backgroundColor: selectedOrder.payment_status === 'paid' ? '#dcfce7' : '#fef3c7' }
+                ]}>
+                  <Ionicons
+                    name={selectedOrder.payment_status === 'paid' ? 'checkmark-circle' : 'time-outline'}
+                    size={16}
+                    color={selectedOrder.payment_status === 'paid' ? '#16a34a' : '#d97706'}
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text style={[
+                    styles.payBadgeText,
+                    { color: selectedOrder.payment_status === 'paid' ? '#15803d' : '#b45309' }
+                  ]}>
+                    {selectedOrder.payment_status === 'paid' ? 'Payment Verified' : 'Payment Pending'}
+                  </Text>
+                </View>
+              </View>
+
+              {getActionButtons(selectedOrder)}
+            </View>
+          </View>
+        </Modal>
+      )}
+
+      {/* Cancel Order Reason Modal */}
+      <Modal
+        visible={showCancelModal}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setShowCancelModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { padding: 20 }]}>
+            <Text style={styles.modalTitle}>Cancel Order</Text>
+            <Text style={{ fontSize: 13, color: '#64748b', marginVertical: 8 }}>
+              Please enter a reason for cancelling this order:
+            </Text>
 
             <TextInput
-              style={styles.modalInput}
-              placeholder="Or type custom reason..."
+              style={styles.reasonInput}
+              placeholder="e.g. Out of stock, Customer cancelled..."
               placeholderTextColor="#94a3b8"
-              value={cancellationReason}
-              onChangeText={setCancellationReason}
+              value={cancelReason}
+              onChangeText={setCancelReason}
             />
 
-            <View style={styles.modalActions}>
-              <TouchableOpacity 
-                style={styles.modalCancelBtn} 
-                onPress={() => setCancelModalVisible(false)}
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 16 }}>
+              <TouchableOpacity
+                style={[styles.modalBtn, { backgroundColor: '#f1f5f9' }]}
+                onPress={() => setShowCancelModal(false)}
               >
-                <Text style={styles.modalCancelText}>Back</Text>
+                <Text style={{ color: '#64748b', fontWeight: '600' }}>Keep Order</Text>
               </TouchableOpacity>
-              <TouchableOpacity 
-                style={styles.modalConfirmBtn} 
-                onPress={handleConfirmCancel}
+
+              <TouchableOpacity
+                style={[styles.modalBtn, { backgroundColor: '#ef4444', marginLeft: 10 }]}
+                disabled={actionLoading}
+                onPress={() => cancelOrder(selectedOrder?.id)}
               >
-                <Text style={styles.modalConfirmText}>Confirm Cancel</Text>
+                <Text style={{ color: '#fff', fontWeight: '700' }}>Confirm Cancel</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
-    </View>
+    </SafeAreaView>
   );
 }
 
-function getStatusColor(status) {
-  switch (status) {
-    case 'new': return '#ef4444';
-    case 'accepted': return '#f59e0b';
-    case 'preparing': return '#3b82f6';
-    case 'ready': return '#8b5cf6';
-    case 'served': return '#10b981';
-    case 'completed': return '#64748b';
-    case 'cancelled': return '#94a3b8';
-    default: return '#64748b';
-  }
-}
-
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f8fafc', paddingTop: 50 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: '#e2e8f0', backgroundColor: '#ffffff' },
-  title: { fontSize: 20, fontWeight: 'bold', color: '#0f172a' },
-  subtitle: { fontSize: 12, color: '#64748b' },
-  stopAlarmBtn: { backgroundColor: '#ef4444', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
-  stopAlarmText: { color: 'white', fontWeight: 'bold', fontSize: 12 },
-  tabsContainer: { flexDirection: 'row', backgroundColor: '#e2e8f0', margin: 12, borderRadius: 8, padding: 4 },
-  tab: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 6 },
-  activeTab: { backgroundColor: '#059669' },
-  tabText: { color: '#64748b', fontWeight: 'bold', fontSize: 13 },
-  activeTabText: { color: 'white' },
-  loadingBox: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  loadingText: { color: '#64748b', marginTop: 12 },
-  scrollContent: { padding: 12 },
-  emptyState: { padding: 40, alignItems: 'center' },
-  emptyText: { color: '#64748b', fontSize: 15 },
-  orderCard: { backgroundColor: '#ffffff', borderRadius: 12, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: '#e2e8f0', shadowColor: '#0f172a', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 2 },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  tableName: { fontSize: 18, fontWeight: 'bold', color: '#0f172a' },
-  takeawayBadge: { backgroundColor: '#8b5cf6', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginLeft: 8 },
-  takeawayText: { color: 'white', fontSize: 10, fontWeight: 'bold' },
-  statusBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
-  statusText: { color: 'white', fontSize: 11, fontWeight: 'bold' },
-  metaText: { color: '#64748b', fontSize: 12, marginVertical: 4 },
-  cancelledBanner: { backgroundColor: '#fef2f2', borderColor: '#fca5a5', borderWidth: 1, borderRadius: 8, padding: 8, marginVertical: 6 },
-  cancelledTitle: { color: '#dc2626', fontWeight: 'bold', fontSize: 12 },
-  cancelledSub: { color: '#64748b', fontSize: 11, marginTop: 2 },
-  paymentAlert: { backgroundColor: '#fffbeb', borderColor: '#fde68a', borderWidth: 1, borderRadius: 8, padding: 10, marginVertical: 6 },
-  paymentAlertText: { color: '#d97706', fontWeight: 'bold', fontSize: 12, marginBottom: 6 },
-  verifyBtn: { backgroundColor: '#f59e0b', padding: 8, borderRadius: 6, alignItems: 'center' },
-  verifyBtnText: { color: '#ffffff', fontWeight: 'bold', fontSize: 12 },
-  itemsBox: { backgroundColor: '#f8fafc', borderRadius: 8, padding: 10, marginTop: 8, borderWidth: 1, borderColor: '#f1f5f9' },
-  newHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
-  itemsHeaderTitle: { color: '#0f172a', fontSize: 12, fontWeight: 'bold' },
-  newTagBadge: { backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#10b981', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
-  newTagText: { color: '#059669', fontSize: 10, fontWeight: 'bold' },
-  itemRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 2 },
-  itemQty: { color: '#059669', fontWeight: 'bold', width: 32 },
-  itemName: { color: '#0f172a', flex: 1, fontWeight: 'bold' },
-  itemPrice: { color: '#0f172a', fontWeight: 'bold' },
-  servedSection: { borderTopWidth: 1, borderTopColor: '#cbd5e1', paddingTop: 8, marginTop: 6 },
-  servedHeaderTitle: { color: '#64748b', fontSize: 11, fontWeight: 'bold', marginBottom: 4 },
-  itemRowServed: { flexDirection: 'row', alignItems: 'center', marginVertical: 2 },
-  itemQtyServed: { color: '#64748b', fontWeight: 'bold', width: 32 },
-  itemNameServed: { color: '#64748b', flex: 1 },
-  servedCheckBadge: { backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#cbd5e1', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginRight: 8 },
-  servedCheckText: { color: '#64748b', fontSize: 10, fontWeight: 'bold' },
-  itemPriceServed: { color: '#64748b' },
-  cancelledSection: { borderTopWidth: 1, borderTopColor: '#fca5a5', paddingTop: 8, marginTop: 6 },
-  cancelledHeaderTitle: { color: '#ef4444', fontSize: 11, fontWeight: 'bold', marginBottom: 4 },
-  itemRowCancelled: { flexDirection: 'row', alignItems: 'center', marginVertical: 2 },
-  itemQtyCancelled: { color: '#ef4444', fontWeight: 'bold', width: 32, textDecorationLine: 'line-through' },
-  itemNameCancelled: { color: '#ef4444', flex: 1, textDecorationLine: 'line-through' },
-  cancelledTagBadge: { backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fca5a5', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginRight: 8 },
-  cancelledTagText: { color: '#ef4444', fontSize: 10, fontWeight: 'bold' },
-  itemPriceCancelled: { color: '#94a3b8', textDecorationLine: 'line-through' },
-  divider: { height: 1, backgroundColor: '#e2e8f0', marginVertical: 6 },
-  summaryRow: { flexDirection: 'row', justifyContent: 'space-between', marginVertical: 2 },
-  summaryLabel: { color: '#64748b', fontSize: 12 },
-  summaryValue: { color: '#475569', fontSize: 12 },
-  grandTotalLabel: { color: '#0f172a', fontWeight: 'bold', fontSize: 14 },
-  grandTotalValue: { color: '#10b981', fontWeight: 'bold', fontSize: 16 },
-  actions: { flexDirection: 'row', gap: 8, marginTop: 10 },
-  actionBtn: { flex: 1, padding: 10, borderRadius: 8, alignItems: 'center' },
-  actionBtnText: { color: 'white', fontWeight: 'bold', fontSize: 13 },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 20 },
-  modalBox: { backgroundColor: '#ffffff', borderRadius: 12, padding: 20, borderWidth: 1, borderColor: '#e2e8f0' },
-  modalTitle: { color: '#0f172a', fontSize: 16, fontWeight: 'bold', marginBottom: 8 },
-  presetLabel: { color: '#64748b', fontSize: 10, fontWeight: 'bold', marginBottom: 6 },
-  presetContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12 },
-  presetChip: { backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#cbd5e1', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 },
-  presetChipActive: { backgroundColor: '#ef4444', borderColor: '#ef4444' },
-  presetChipText: { color: '#475569', fontSize: 12, fontWeight: '500' },
-  presetChipTextActive: { color: 'white', fontWeight: 'bold' },
-  modalInput: { backgroundColor: '#f8fafc', color: '#0f172a', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, padding: 12, marginBottom: 16 },
-  modalActions: { flexDirection: 'row', gap: 10 },
-  modalCancelBtn: { flex: 1, padding: 12, borderRadius: 8, backgroundColor: '#e2e8f0', alignItems: 'center' },
-  modalCancelText: { color: '#475569', fontWeight: 'bold' },
-  modalConfirmBtn: { flex: 1, padding: 12, borderRadius: 8, backgroundColor: '#ef4444', alignItems: 'center' },
-  modalConfirmText: { color: 'white', fontWeight: 'bold' },
+  container: { flex: 1, backgroundColor: '#f8fafc' },
+  header: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 10,
+    backgroundColor: '#ffffff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  title: { fontSize: 24, fontWeight: '700', color: '#0f172a', marginBottom: 12 },
+  offlineBanner: {
+    backgroundColor: '#3b82f6',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justify: 'center',
+  },
+  offlineBannerText: { color: '#ffffff', fontWeight: '600', fontSize: 12 },
+  tabContainer: { flexDirection: 'row', backgroundColor: '#f1f5f9', borderRadius: 10, padding: 4 },
+  tabBtn: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 8 },
+  tabBtnActive: { backgroundColor: '#ffffff', elevation: 2, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 4 },
+  tabText: { fontSize: 13, fontWeight: '600', color: '#64748b' },
+  tabTextActive: { color: COLORS.primary, fontWeight: '700' },
+  callDot: { position: 'absolute', top: 6, right: 12, width: 8, height: 8, borderRadius: 4, backgroundColor: '#ef4444' },
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 8,
+    paddingHorizontal: 12,
+    height: 44,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  searchInput: { flex: 1, fontSize: 14, color: '#0f172a' },
+  chipContainer: { height: 44, marginBottom: 8 },
+  chipScroll: { paddingHorizontal: 16, alignItems: 'center' },
+  chip: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: '#ffffff',
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  chipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  chipText: { fontSize: 12, fontWeight: '600', color: '#64748b' },
+  chipTextActive: { color: '#ffffff', fontWeight: '700' },
+  listContent: { padding: 16 },
+  orderCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 12,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
+  },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  tableName: { fontSize: 16, fontWeight: '700', color: '#0f172a' },
+  statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
+  statusBadgeText: { fontSize: 11, fontWeight: '700' },
+  itemsSummary: { fontSize: 13, color: '#475569', marginBottom: 12, lineHeight: 18 },
+  cardFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 8, borderTopWidth: 1, borderTopColor: '#f1f5f9' },
+  timeAgoText: { fontSize: 12, color: '#94a3b8' },
+  priceText: { fontSize: 16, fontWeight: '700', color: COLORS.primary },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  emptyContainer: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60 },
+  emptyText: { fontSize: 15, color: '#94a3b8', fontWeight: '600' },
+  callCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 12,
+    flexDirection: 'row',
+    justify: 'space-between',
+    alignItems: 'center',
+    elevation: 2,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
+  },
+  callIconBg: { width: 42, height: 42, borderRadius: 21, backgroundColor: COLORS.primaryLight, alignItems: 'center', justifyContent: 'center' },
+  callTableName: { fontSize: 16, fontWeight: '700', color: '#0f172a' },
+  callTypeText: { fontSize: 13, color: '#475569', marginVertical: 2 },
+  resolveBtn: { backgroundColor: COLORS.primary, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10, flexDirection: 'row', alignItems: 'center' },
+  resolveBtnText: { color: '#ffffff', fontWeight: '700', fontSize: 13 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.5)', justifyContent: 'flex-end' },
+  modalContent: { backgroundColor: '#ffffff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  modalTitle: { fontSize: 20, fontWeight: '700', color: '#0f172a' },
+  modalTime: { fontSize: 12, color: '#94a3b8', marginTop: 2 },
+  sectionLabel: { fontSize: 11, fontWeight: '700', color: '#94a3b8', letterSpacing: 0.8, marginBottom: 8 },
+  itemRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  itemName: { flex: 1, fontSize: 14, fontWeight: '600', color: '#1e293b' },
+  itemQty: { fontSize: 14, fontWeight: '600', color: '#64748b', marginHorizontal: 12 },
+  itemPrice: { fontSize: 14, fontWeight: '700', color: '#0f172a' },
+  modalTotalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 14, marginBottom: 12 },
+  totalLabel: { fontSize: 15, fontWeight: '600', color: '#64748b' },
+  totalValue: { fontSize: 22, fontWeight: '700', color: COLORS.primary },
+  paymentBadgeRow: { marginBottom: 16 },
+  payBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, selfAlign: 'flex-start' },
+  payBadgeText: { fontSize: 12, fontWeight: '700' },
+  actionRow: { marginTop: 8 },
+  btn: { paddingVertical: 12, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
+  btnText: { color: '#ffffff', fontWeight: '700', fontSize: 14 },
+  reasonInput: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 12, fontSize: 14, color: '#0f172a' },
+  modalBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10 },
 });
