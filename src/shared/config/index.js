@@ -7,6 +7,7 @@ export const CONFIG = {
   SUPABASE_ANON_KEY: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || extra.EXPO_PUBLIC_SUPABASE_ANON_KEY || 'mock-anon-key',
   NOTIFICATION_CHANNEL_ID: 'smartdine-urgent-v3',
   NOTIFICATION_CHANNEL_NAME: 'Urgent Orders & Calls',
+  PROJECT_ID: extra.eas?.projectId || '2fb0358d-6e46-4269-996d-0614a98052e1',
   POLL_INTERVAL_MS: 6000,
   HEARTBEAT_INTERVAL_MS: 30000,
 };

@@ -44,23 +44,43 @@ export async function registerForPushNotificationsAsync(userId) {
       finalStatus = status;
     }
     if (finalStatus !== 'granted') {
-      console.log('[NotificationManager] Push permission not granted');
+      console.log('[NotificationDiagnostics] Push permission state: NOT GRANTED');
+      console.log('[NotificationDiagnostics] Expo Push Token generated: NO');
       return null;
     }
 
-    const tokenData = await Notifications.getExpoPushTokenAsync().catch(() => null);
+    const projectId = CONFIG.PROJECT_ID || '2fb0358d-6e46-4269-996d-0614a98052e1';
+    let tokenData = null;
+    try {
+      tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
+    } catch (tokenErr) {
+      console.log('[NotificationDiagnostics] Expo Push Token generated: NO (Error:', tokenErr?.message, ')');
+      return null;
+    }
+
     const token = tokenData?.data;
+    if (token) {
+      console.log('[NotificationDiagnostics] Expo Push Token generated: YES');
+    } else {
+      console.log('[NotificationDiagnostics] Expo Push Token generated: NO');
+      return null;
+    }
 
     if (token && userId) {
-      await supabase
+      const { error: dbErr } = await supabase
         .from('profiles')
         .update({ push_token: token })
-        .eq('id', userId)
-        .catch(e => console.log('[NotificationManager] Token update error:', e?.message));
+        .eq('id', userId);
+
+      if (dbErr) {
+        console.log('[NotificationDiagnostics] Database token persistence: FAILED (Error:', dbErr?.message, ')');
+      } else {
+        console.log('[NotificationDiagnostics] Database token persistence: SUCCESS');
+      }
     }
     return token;
   } catch (e) {
-    console.log('[NotificationManager] Push registration error:', e?.message);
+    console.log('[NotificationDiagnostics] Push registration error:', e?.message);
     return null;
   }
 }
