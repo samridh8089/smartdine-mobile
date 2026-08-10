@@ -69,7 +69,7 @@ function OTASplash({ message }) {
   return (
     <View style={errStyles.container}>
       <MaterialCommunityIcons name="silverware-fork-knife" size={48} color="#059669" style={{ marginBottom: 16 }} />
-      <Text style={errStyles.title}>SmartDine</Text>
+      <Text style={errStyles.title}>CleverOps</Text>
       <Text style={errStyles.msg}>{message || 'Updating app...'}</Text>
       <ActivityIndicator color="#059669" size="large" />
     </View>

@@ -11,7 +11,6 @@ import { supabase } from '../lib/supabase';
 import { startAlarm, stopAlarm, stopAllAlarms } from '../lib/alarmManager';
 import { sendLocalNotification } from '../lib/notifications';
 import { COLORS, FONTS, RADIUS, SHADOWS, formatCurrency, timeAgo, getStatusColor, getStatusLabel } from '../lib/theme';
-import OTAUpdateBtn from '../components/OTAUpdateBtn';
 
 const PENDING_ORDERS_STORAGE_KEY = '@smartdine_waiter_pending_orders';
 
@@ -290,8 +289,6 @@ export default function WaiterOrdersScreen({ route }) {
             <Text style={styles.alertPillText}>{readyCount} READY</Text>
           </View>
         )}
-
-        <OTAUpdateBtn style={{ marginRight: 8 }} />
 
         <TouchableOpacity
           style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#fee2e2', alignItems: 'center', justifyContent: 'center' }}

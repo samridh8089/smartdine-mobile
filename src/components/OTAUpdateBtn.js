@@ -31,7 +31,7 @@ export default function OTAUpdateBtn({ iconColor = '#0284c7', bgColor = '#e0f2fe
           { cancelable: false }
         );
       } else {
-        Alert.alert('App Up To Date ✅', 'You are already using the latest version of SmartDine!');
+        Alert.alert('App Up To Date ✓', 'You are already using the latest version of CleverOps!');
       }
     } catch (error) {
       console.log('[OTAUpdate] Error:', error?.message);

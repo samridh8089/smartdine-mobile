@@ -13,7 +13,6 @@ import {
 } from '../lib/theme';
 
 import { stopAllAlarms } from '../lib/alarmManager';
-import OTAUpdateBtn from '../components/OTAUpdateBtn';
 
 export default function DashboardScreen({ route }) {
   const navigation = useNavigation();
@@ -146,10 +145,8 @@ export default function DashboardScreen({ route }) {
         <View style={styles.header}>
           <View style={{ flex: 1 }}>
             <Text style={styles.greeting}>{getGreeting()}</Text>
-            <Text style={styles.restaurantName} numberOfLines={1}>{restaurantName || 'SmartDine Restaurant'}</Text>
+            <Text style={styles.restaurantName} numberOfLines={1}>{restaurantName || 'CleverOps Restaurant'}</Text>
           </View>
-
-          <OTAUpdateBtn style={{ marginRight: 8 }} />
 
           <TouchableOpacity
             style={[styles.avatarCircle, { marginRight: 8 }]}

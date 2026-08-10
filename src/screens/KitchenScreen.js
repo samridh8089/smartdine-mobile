@@ -14,7 +14,6 @@ import { sendLocalNotification } from '../lib/notifications';
 import {
   COLORS, FONTS, RADIUS, SHADOWS, timeAgo, formatCurrency,
 } from '../lib/theme';
-import OTAUpdateBtn from '../components/OTAUpdateBtn';
 
 const CANCEL_REASONS = [
   'Item Out of Stock',
@@ -536,8 +535,6 @@ export default function KitchenScreen({ route }) {
           <Text style={styles.title}>Kitchen Display</Text>
           <Text style={styles.subtitle}>{totalActive} active orders in kitchen</Text>
         </View>
-
-        <OTAUpdateBtn style={{ marginRight: 8 }} />
 
         <TouchableOpacity
           style={[styles.bellBtn, bellOn ? styles.bellBtnOn : styles.bellBtnOff, { marginRight: 8 }]}

@@ -15,7 +15,6 @@ import {
   COLORS, FONTS, RADIUS, SHADOWS,
   formatCurrency, getStatusColor, getStatusLabel, timeAgo,
 } from '../lib/theme';
-import OTAUpdateBtn from '../components/OTAUpdateBtn';
 
 const ORDER_STATUSES = ['all', 'new', 'accepted', 'preparing', 'ready', 'served', 'completed', 'cancelled'];
 const PENDING_OWNER_ORDERS_KEY = '@smartdine_owner_pending_orders';

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
   ActivityIndicator, KeyboardAvoidingView, Platform,
-  Animated, StatusBar, ScrollView, TouchableWithoutFeedback, Keyboard,
+  Animated, StatusBar, ScrollView, TouchableWithoutFeedback, Keyboard, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -10,7 +10,6 @@ import { supabase } from '../lib/supabase';
 import { COLORS } from '../lib/theme';
 import { registerForPushNotificationsAsync } from '../lib/notifications';
 import * as Updates from 'expo-updates';
-import OTAUpdateBtn from '../components/OTAUpdateBtn';
 
 export default function LoginScreen({ navigation }) {
   const [email, setEmail] = useState('');
@@ -23,38 +22,41 @@ export default function LoginScreen({ navigation }) {
   const fadeAnim = useState(new Animated.Value(0))[0];
   const slideAnim = useState(new Animated.Value(30))[0];
 
-  const [selectedRole, setSelectedRole] = useState('auto'); // 'auto' | 'kitchen' | 'waiter' | 'owner'
   const [checkingUpdate, setCheckingUpdate] = useState(false);
 
   const handleCheckUpdate = async () => {
     if (__DEV__) {
-      Alert.alert('Development Mode', 'OTA updates are active in Production standalone build.');
+      Alert.alert('You\'re up to date', 'You\'re using the latest version of CleverOps.');
       return;
     }
     setCheckingUpdate(true);
     try {
       const update = await Updates.checkForUpdateAsync();
       if (update.isAvailable) {
-        await Updates.fetchUpdateAsync();
         Alert.alert(
-          'Update Successful! 🎉',
-          'App has been updated to the latest version. Restarting now...',
+          'Update available',
+          'New features and improvements are ready.',
           [
             {
-              text: 'OK',
+              text: 'Update Now',
               onPress: async () => {
-                await Updates.reloadAsync();
+                try {
+                  await Updates.fetchUpdateAsync();
+                  await Updates.reloadAsync();
+                } catch (fetchErr) {
+                  Alert.alert('Update unavailable', 'Please try again later.');
+                }
               },
             },
           ],
           { cancelable: false }
         );
       } else {
-        Alert.alert('App Up To Date ✅', 'You are already using the latest version of SmartDine!');
+        Alert.alert('You\'re up to date', 'You\'re using the latest version of CleverOps.');
       }
     } catch (error) {
       console.log('[OTAUpdate] Error:', error?.message);
-      Alert.alert('Update Check', error?.message || 'Unable to check for updates right now.');
+      Alert.alert('Update unavailable', 'Please try again later.');
     } finally {
       setCheckingUpdate(false);
     }
@@ -75,7 +77,7 @@ export default function LoginScreen({ navigation }) {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user?.id) {
-        await fetchProfileAndNavigate(session.user.id, session.user.email || '');
+        await fetchProfileAndNavigate(session.user.id);
         return;
       }
     } catch (e) {
@@ -85,38 +87,20 @@ export default function LoginScreen({ navigation }) {
     animateIn();
   }
 
-  async function fetchProfileAndNavigate(userId, userEmail = '') {
+  async function fetchProfileAndNavigate(userId) {
     try {
-      let profile = null;
-
-      // 1. Fetch profile from database
-      const { data: p1 } = await supabase
+      const { data: profile, error } = await supabase
         .from('profiles')
         .select('*, restaurants(name)')
         .eq('id', userId)
         .maybeSingle();
 
-      if (p1) profile = p1;
-
-      const em = (userEmail || profile?.email || email || '').toLowerCase();
-
-      // Priority 1: User explicitly picked role chip on Login screen
-      // Priority 2: Database profile.role ('kitchen', 'waiter', 'owner', 'cashier')
-      // Priority 3: Email prefix inference
-      let finalRole = (selectedRole !== 'auto' ? selectedRole : null) || profile?.role;
-
-      if (!finalRole) {
-        if (em.includes('kitchen') || em.startsWith('youk@')) finalRole = 'kitchen';
-        else if (em.includes('waiter') || em.startsWith('youw@')) finalRole = 'waiter';
-        else if (em.includes('cashier')) finalRole = 'cashier';
-        else finalRole = 'owner';
-      }
-
-      if (!profile) {
-        profile = { id: userId, role: finalRole, email: em, restaurant_id: 'c1853f65-c10c-4f8a-b379-00a60f404ef9' };
-      } else {
-        profile.role = finalRole;
-        if (!profile.restaurant_id) profile.restaurant_id = 'c1853f65-c10c-4f8a-b379-00a60f404ef9';
+      if (error || !profile || !profile.role) {
+        console.log('[LoginScreen] Missing or unverified profile role:', error?.message);
+        setCheckingSession(false);
+        setErrorMsg('Your account role could not be verified. Please contact your administrator.');
+        animateIn();
+        return;
       }
 
       if (profile.restaurants?.name && !profile.restaurant_name) {
@@ -127,26 +111,22 @@ export default function LoginScreen({ navigation }) {
         registerForPushNotificationsAsync(userId).catch(() => {});
       }, 500);
 
-      navigateByRole(finalRole, profile);
+      navigateByRole(profile.role, profile);
     } catch (e) {
       console.log('[LoginScreen] profile fetch error:', e?.message);
-      const em = (userEmail || email || '').toLowerCase();
-      let fallbackRole = selectedRole !== 'auto' ? selectedRole : null;
-      if (!fallbackRole) {
-        if (em.includes('kitchen') || em.startsWith('youk@')) fallbackRole = 'kitchen';
-        else if (em.includes('waiter') || em.startsWith('youw@')) fallbackRole = 'waiter';
-        else if (em.includes('cashier')) fallbackRole = 'cashier';
-        else fallbackRole = 'owner';
-      }
-
-      navigateByRole(fallbackRole, { id: userId, role: fallbackRole, email: em, restaurant_id: 'c1853f65-c10c-4f8a-b379-00a60f404ef9' });
+      setCheckingSession(false);
+      setErrorMsg('Your account role could not be verified. Please contact your administrator.');
+      animateIn();
     }
   }
 
   function navigateByRole(role, profile) {
     setCheckingSession(false);
-    switch (role) {
+    const normalizedRole = (role || '').toLowerCase().trim();
+    switch (normalizedRole) {
       case 'kitchen':
+      case 'kds':
+      case 'kitchen_staff':
         navigation.replace('KitchenApp', { profile });
         break;
       case 'waiter':
@@ -158,8 +138,12 @@ export default function LoginScreen({ navigation }) {
       case 'super_admin':
         navigation.replace('SuperAdmin', { profile });
         break;
-      default:
+      case 'owner':
+      case 'manager':
         navigation.replace('MainApp', { profile });
+        break;
+      default:
+        setErrorMsg('Your account role could not be verified. Please contact your administrator.');
         break;
     }
   }
@@ -182,10 +166,8 @@ export default function LoginScreen({ navigation }) {
 
     setLoading(true);
     try {
-      // 1. Purge previous session state
       await supabase.auth.signOut().catch(() => {});
 
-      // 2. Perform sign-in
       const { data, error } = await supabase.auth.signInWithPassword({
         email: cleanEmail,
         password: cleanPassword,
@@ -197,7 +179,7 @@ export default function LoginScreen({ navigation }) {
       }
 
       if (data?.user) {
-        await fetchProfileAndNavigate(data.user.id, cleanEmail);
+        await fetchProfileAndNavigate(data.user.id);
       } else {
         setErrorMsg('Login failed. Please try again.');
       }
@@ -215,7 +197,7 @@ export default function LoginScreen({ navigation }) {
         <View style={styles.splashLogoCircle}>
           <MaterialCommunityIcons name="silverware-fork-knife" size={40} color="#ffffff" />
         </View>
-        <Text style={styles.splashTitle}>SmartDine</Text>
+        <Text style={styles.splashTitle}>CleverOps</Text>
         <Text style={styles.splashSubtitle}>Staff & Operations Portal</Text>
         <ActivityIndicator color="#ffffff" size="large" style={{ marginTop: 32 }} />
       </View>
@@ -237,13 +219,10 @@ export default function LoginScreen({ navigation }) {
           >
             {/* Brand Header */}
             <View style={styles.brandHeader}>
-              <View style={{ position: 'absolute', top: 0, right: 16, zIndex: 10 }}>
-                <OTAUpdateBtn bgColor="#ffffff" iconColor={COLORS.primary} />
-              </View>
               <View style={styles.logoCircle}>
                 <MaterialCommunityIcons name="silverware-fork-knife" size={30} color="#ffffff" />
               </View>
-              <Text style={styles.appName}>SmartDine</Text>
+              <Text style={styles.appName}>CleverOps</Text>
               <Text style={styles.appTagline}>Staff & Operations Portal</Text>
             </View>
 
@@ -251,33 +230,6 @@ export default function LoginScreen({ navigation }) {
             <Animated.View style={[styles.card, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
               <Text style={styles.cardTitle}>Sign In</Text>
               <Text style={styles.cardSubtitle}>Enter your restaurant staff credentials</Text>
-
-              {/* OTA Update Action Chip */}
-              <TouchableOpacity
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justify: 'center',
-                  backgroundColor: '#e0f2fe',
-                  paddingVertical: 10,
-                  paddingHorizontal: 16,
-                  borderRadius: 12,
-                  marginBottom: 16,
-                  borderWidth: 1,
-                  borderColor: '#bae6fd'
-                }}
-                onPress={handleCheckUpdate}
-                disabled={checkingUpdate}
-              >
-                {checkingUpdate ? (
-                  <ActivityIndicator size="small" color="#0284c7" style={{ marginRight: 8 }} />
-                ) : (
-                  <Ionicons name="cloud-download-outline" size={18} color="#0284c7" style={{ marginRight: 8 }} />
-                )}
-                <Text style={{ fontSize: 13, fontWeight: '700', color: '#0284c7' }}>
-                  {checkingUpdate ? 'Checking for updates...' : 'Check & Apply App Updates 🚀'}
-                </Text>
-              </TouchableOpacity>
 
               {/* Error Banner */}
               {errorMsg ? (
@@ -350,34 +302,22 @@ export default function LoginScreen({ navigation }) {
                 )}
               </TouchableOpacity>
 
-              {/* Interactive Role Selection Chips */}
-              <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 8, marginTop: 12 }}>
-                Login Portal Mode:
-              </Text>
-              <View style={styles.rolesRow}>
-                {[
-                  { label: 'Auto', key: 'auto' },
-                  { label: 'Kitchen 👨‍🍳', key: 'kitchen' },
-                  { label: 'Waiter 🛎️', key: 'waiter' },
-                  { label: 'Owner 👑', key: 'owner' }
-                ].map((item) => (
-                  <TouchableOpacity
-                    key={item.key}
-                    style={[
-                      styles.roleChip,
-                      selectedRole === item.key && { backgroundColor: COLORS.primary, borderColor: COLORS.primary }
-                    ]}
-                    onPress={() => setSelectedRole(item.key)}
-                  >
-                    <Text style={[
-                      styles.roleChipText,
-                      selectedRole === item.key && { color: '#ffffff', fontWeight: '700' }
-                    ]}>
-                      {item.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
+              {/* Single Polished OTA Check for Updates Button */}
+              <TouchableOpacity
+                style={styles.updateBtn}
+                onPress={handleCheckUpdate}
+                disabled={checkingUpdate}
+                activeOpacity={0.7}
+              >
+                {checkingUpdate ? (
+                  <ActivityIndicator size="small" color="#0284c7" style={{ marginRight: 8 }} />
+                ) : (
+                  <Ionicons name="cloud-download-outline" size={18} color="#0284c7" style={{ marginRight: 8 }} />
+                )}
+                <Text style={styles.updateBtnText}>
+                  {checkingUpdate ? 'Checking for updates...' : 'Check for Updates'}
+                </Text>
+              </TouchableOpacity>
             </Animated.View>
 
             <Text style={styles.footerText}>Powered by CleverOps · cleverops.in</Text>
@@ -542,26 +482,22 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
-  rolesRow: {
+  updateBtn: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 20,
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#f1f5f9',
+    backgroundColor: '#f0f9ff',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    marginTop: 16,
+    borderWidth: 1,
+    borderColor: '#bae6fd',
   },
-  roleChip: {
-    backgroundColor: '#f1f5f9',
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 999,
-    margin: 3,
-  },
-  roleChipText: {
-    fontSize: 11,
+  updateBtnText: {
+    fontSize: 14,
     fontWeight: '600',
-    color: '#64748b',
+    color: '#0284c7',
   },
   footerText: {
     fontSize: 12,
@@ -569,3 +505,4 @@ const styles = StyleSheet.create({
     marginTop: 24,
   },
 });
+
