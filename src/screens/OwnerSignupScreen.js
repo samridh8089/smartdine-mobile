@@ -380,8 +380,50 @@ export default function OwnerSignupScreen({ navigation }) {
       const cleanRestName = restaurantName.trim();
       const cleanSlug = slug.trim() || cleanRestName.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-      // TASK 2: PRE-PAYMENT CHECK — Verify if email already owns a restaurant BEFORE opening Razorpay
+      // TASK 1: PRE-PAYMENT CHECK — Verify if authenticated user or email already owns a restaurant BEFORE opening Razorpay
       try {
+        const { data: authUserData } = await supabase.auth.getUser();
+        const currentUser = authUserData?.user;
+
+        if (currentUser?.id) {
+          const { data: existingByOwner } = await supabase
+            .from('restaurants')
+            .select('id, name')
+            .eq('owner_id', currentUser.id)
+            .maybeSingle();
+
+          if (existingByOwner) {
+            console.log('[OwnerSignup] Restaurant found by owner_id for user:', currentUser.id);
+            setExistingDuplicateRestaurant({ name: existingByOwner.name || cleanRestName });
+            setShowDuplicateModal(true);
+            setIsProcessingPay(false);
+            return; // STOP! DO NOT CREATE RAZORPAY ORDER OR OPEN CHECKOUT!
+          }
+        }
+
+        // Query profiles and restaurants by email
+        const { data: profData } = await supabase
+          .from('profiles')
+          .select('id, restaurant_id')
+          .eq('email', cleanEmail)
+          .maybeSingle();
+
+        if (profData?.restaurant_id) {
+          const { data: activeRest } = await supabase
+            .from('restaurants')
+            .select('id, name')
+            .eq('id', profData.restaurant_id)
+            .maybeSingle();
+
+          if (activeRest) {
+            console.log('[OwnerSignup] Active restaurant found for profile:', profData.id);
+            setExistingDuplicateRestaurant({ name: activeRest.name || cleanRestName });
+            setShowDuplicateModal(true);
+            setIsProcessingPay(false);
+            return; // STOP! DO NOT CREATE RAZORPAY ORDER OR OPEN CHECKOUT!
+          }
+        }
+
         const checkRes = await fetch(`${API_BASE}/api/auth/check-email-availability`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
