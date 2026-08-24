@@ -116,6 +116,8 @@ export default function OwnerSignupScreen({ navigation }) {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [showDuplicateModal, setShowDuplicateModal] = useState(false);
+  const [existingDuplicateRestaurant, setExistingDuplicateRestaurant] = useState(null);
 
   // Step 2: Email OTP State (8 digits)
   const [emailOtp, setEmailOtp] = useState('');
@@ -359,14 +361,41 @@ export default function OwnerSignupScreen({ navigation }) {
       const cleanRestName = restaurantName.trim();
       const cleanSlug = slug.trim() || cleanRestName.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-      // 1. Create real Razorpay order on backend
+      // TASK 2: PRE-PAYMENT CHECK — Verify if email already owns a restaurant BEFORE opening Razorpay
+      try {
+        const checkRes = await fetch(`${API_BASE}/api/auth/check-email-availability`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: cleanEmail })
+        }).then(r => r.json()).catch(() => null);
+
+        if (checkRes && checkRes.exists) {
+          console.log('[OwnerSignup] Duplicate restaurant detected pre-payment for email:', cleanEmail);
+          setExistingDuplicateRestaurant({ name: checkRes.error || cleanRestName });
+          setShowDuplicateModal(true);
+          setIsProcessingPay(false);
+          return; // STOP! DO NOT OPEN RAZORPAY!
+        }
+      } catch (chkErr) {
+        console.warn('[OwnerSignup] Pre-payment email check warning:', chkErr);
+      }
+
+      // 1. Create real Razorpay order on backend with HTTP 409 safety
       const rzpOrder = await createRazorpayOrder({
         amount,
         currency: 'INR',
         plan: selectedPlan,
         restaurantName: cleanRestName,
+        email: cleanEmail,
         billingInterval
       });
+
+      if (rzpOrder?.code === 'RESTAURANT_ALREADY_EXISTS' || rzpOrder?.error?.includes('already owns')) {
+        setExistingDuplicateRestaurant(rzpOrder.existingRestaurant || { name: cleanRestName });
+        setShowDuplicateModal(true);
+        setIsProcessingPay(false);
+        return; // STOP! DO NOT OPEN RAZORPAY!
+      }
 
       if (!rzpOrder?.order_id) {
         throw new Error('Failed to initialize payment order on server');
@@ -1286,6 +1315,41 @@ export default function OwnerSignupScreen({ navigation }) {
                 ) : (
                   <Text style={styles.continuePayBtnText}>Continue 🔒</Text>
                 )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* TASK 2: DUPLICATE RESTAURANT PRE-PAYMENT MODAL */}
+      <Modal visible={showDuplicateModal} transparent animationType="fade">
+        <View style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.75)', justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+          <View style={{ backgroundColor: '#ffffff', borderRadius: 20, padding: 26, width: '100%', maxWidth: 360, alignItems: 'center', elevation: 8 }}>
+            <Ionicons name="storefront-outline" size={44} color="#dc2626" style={{ marginBottom: 12 }} />
+            <Text style={{ fontSize: 18, fontWeight: '800', color: '#0f172a', marginBottom: 6, textAlign: 'center' }}>Restaurant Already Exists</Text>
+            <Text style={{ fontSize: 13, color: '#64748b', textAlign: 'center', marginBottom: 20, lineHeight: 18 }}>
+              This account already owns a restaurant: <Text style={{ fontWeight: '700', color: '#0f172a' }}>{existingDuplicateRestaurant?.name || 'Your Restaurant'}</Text>.
+            </Text>
+
+            <View style={{ width: '100%', gap: 10 }}>
+              <TouchableOpacity
+                style={{ backgroundColor: '#059669', paddingVertical: 14, borderRadius: 12, alignItems: 'center' }}
+                onPress={() => {
+                  setShowDuplicateModal(false);
+                  navigation.navigate('Login');
+                }}
+              >
+                <Text style={{ color: '#ffffff', fontWeight: '800', fontSize: 14 }}>Go to Dashboard</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={{ backgroundColor: '#f1f5f9', paddingVertical: 12, borderRadius: 12, alignItems: 'center' }}
+                onPress={() => {
+                  setShowDuplicateModal(false);
+                  Linking.openURL('https://wa.me/918949266064?text=Hi%20CleverOps%20Support%2C%20I%20need%20help%20with%20my%20restaurant%20account.');
+                }}
+              >
+                <Text style={{ color: '#475569', fontWeight: '700', fontSize: 13 }}>Contact Support</Text>
               </TouchableOpacity>
             </View>
           </View>
