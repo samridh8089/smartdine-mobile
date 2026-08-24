@@ -121,6 +121,7 @@ export default function OwnerSignupScreen({ navigation }) {
 
   // Step 2: Email OTP State (8 digits)
   const [emailOtp, setEmailOtp] = useState('');
+  const [otpSessionId, setOtpSessionId] = useState('');
   const [otpTimer, setOtpTimer] = useState(300); // 5 minutes
   const [resendCooldown, setResendCooldown] = useState(30);
 
@@ -242,7 +243,11 @@ export default function OwnerSignupScreen({ navigation }) {
         throw new Error(otpData.error || 'Failed to send verification OTP. Please try again.');
       }
 
-      console.log('[CleverOps OTP Sent to]:', cleanEmail);
+      if (otpData?.sessionId) {
+        setOtpSessionId(otpData.sessionId);
+      }
+
+      console.log('[CleverOps OTP Sent to]:', cleanEmail, 'SessionId:', otpData?.sessionId);
 
       setOtpTimer(300);
       setResendCooldown(30);
@@ -260,7 +265,7 @@ export default function OwnerSignupScreen({ navigation }) {
     const cleanEmailCode = (overrideEmailCode || emailOtp).trim().replace(/\D/g, '');
 
     if (!/^\d{8}$/.test(cleanEmailCode)) {
-      setErrorMsg('Please enter a valid 8-digit Email OTP.');
+      setErrorMsg('Invalid OTP. Please enter the correct 8-digit code.');
       return;
     }
 
@@ -276,6 +281,7 @@ export default function OwnerSignupScreen({ navigation }) {
         body: JSON.stringify({
           email: cleanEmail,
           emailOtp: cleanEmailCode,
+          sessionId: otpSessionId,
           type: 'owner_email'
         })
       });
@@ -283,14 +289,10 @@ export default function OwnerSignupScreen({ navigation }) {
       const verifyData = await verifyRes.json();
 
       if (!verifyRes.ok || !verifyData.success) {
-        const errMsg = (verifyData.error || '').toLowerCase();
-        if (errMsg.includes('expired')) {
-          setErrorMsg('OTP expired. Please tap Resend to receive a new code.');
-        } else if (errMsg.includes('invalid') || errMsg.includes('incorrect')) {
-          setErrorMsg('Incorrect OTP. Please check your email and try again.');
-        } else {
-          setErrorMsg(verifyData.error || 'Invalid OTP. Please check your email and try again.');
+        if (verifyData.newSessionId) {
+          setOtpSessionId(verifyData.newSessionId);
         }
+        setErrorMsg(verifyData.error || 'Invalid OTP. Please enter the correct 8-digit code.');
         setLoading(false);
         return;
       }
@@ -309,15 +311,32 @@ export default function OwnerSignupScreen({ navigation }) {
     if (resendCooldown > 0) return;
     try {
       const cleanEmail = email.trim().toLowerCase();
-      await supabase.auth.signInWithOtp({
-        email: cleanEmail,
-        options: { shouldCreateUser: true }
+      const cleanName = fullName.trim();
+      
+      const resendRes = await fetch('https://www.cleverops.in/api/auth/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: cleanEmail,
+          type: 'owner_email',
+          recipientName: cleanName
+        })
       });
+      const resendData = await resendRes.json();
+
+      if (!resendRes.ok || !resendData.success) {
+        throw new Error(resendData.error || 'Failed to resend code');
+      }
+
+      if (resendData?.sessionId) {
+        setOtpSessionId(resendData.sessionId);
+      }
+
       setOtpTimer(300);
       setResendCooldown(30);
       Alert.alert('Code Dispatched', 'A new 8-digit verification code has been sent to your email.');
     } catch (e) {
-      Alert.alert('Notice', 'Unable to resend OTP right now. Please try again.');
+      Alert.alert('Notice', e?.message || 'Unable to resend OTP right now. Please try again.');
     }
   };
 
