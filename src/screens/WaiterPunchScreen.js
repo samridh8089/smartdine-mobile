@@ -8,6 +8,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
 import { COLORS, FONTS, RADIUS, SHADOWS, formatCurrency } from '../lib/theme';
+import { CONFIG } from '../shared/config';
 
 export default function WaiterPunchScreen({ route }) {
   const profile = route?.params?.profile ?? {};
@@ -88,87 +89,50 @@ export default function WaiterPunchScreen({ route }) {
       : 'Takeaway';
 
     try {
-      const subtotal = cartTotal;
-      const gst = parseFloat((subtotal * 0.05).toFixed(2));
-      const grandTotal = parseFloat((subtotal + gst).toFixed(2));
+      console.log('[FORENSIC_INVENTORY_TRACE] MOBILE_WAITER_PUNCH_START - Restaurant:', restaurantId);
+      const apiEndpoint = `${CONFIG.API_BASE_URL || 'https://www.cleverops.in'}/api/staff/punch-order`;
 
-      // 1. Insert main order into 'orders'
-      const orderData = {
-        restaurant_id: restaurantId,
-        order_type: orderType,
-        status: 'new',
-        payment_status: markPaid ? 'paid' : 'pending',
-        table_name: tableNameStr,
-        table_id: orderType === 'dine_in' ? selectedTable?.id : null,
-        subtotal: subtotal,
-        gst: gst,
-        total: grandTotal,
-        special_instructions: notes || '',
+      const payload = {
+        restaurantId,
+        tableId: orderType === 'dine_in' ? selectedTable?.id : null,
+        items: cart.map(item => ({
+          menuItemId: item.id,
+          quantity: item.quantity,
+          notes: item.notes || '',
+          price: item.price
+        })),
+        specialInstructions: notes || '',
+        orderType,
+        paymentStatus: markPaid ? 'paid' : 'pending',
+        staffName: profile?.full_name || 'Waiter/Owner'
       };
 
-      const { data: order, error: orderErr } = await supabase
-        .from('orders')
-        .insert(orderData)
-        .select()
-        .single();
+      const response = await fetch(apiEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
 
-      if (orderErr) {
-        throw new Error(`Order insertion failed: ${orderErr.message}`);
+      const resJson = await response.json();
+
+      if (!response.ok || !resJson.success || !resJson.order) {
+        throw new Error(resJson.error || 'Server rejected order creation');
       }
 
-      if (!order?.id) {
-        throw new Error('Order creation failed: No order record returned.');
-      }
+      const order = resJson.order;
+      console.log('[FORENSIC_INVENTORY_TRACE] MOBILE_WAITER_PUNCH_SUCCESS - OrderID:', order.id);
 
-      // 2. Insert kitchen batch into 'order_batches'
-      const batchData = {
-        order_id: order.id,
-        batch_number: 1,
-        status: 'new',
-        special_instructions: notes || '',
-      };
-
-      const { data: batch, error: batchErr } = await supabase
-        .from('order_batches')
-        .insert(batchData)
-        .select()
-        .single();
-
-      if (batchErr) {
-        throw new Error(`Kitchen batch creation failed: ${batchErr.message}`);
-      }
-
-      // 3. Insert line items into 'order_items'
-      const itemsData = cart.map(item => ({
-        order_id: order.id,
-        batch_id: batch?.id || null,
-        menu_item_id: item.id,
-        menu_item_name: item.name,
-        quantity: item.quantity,
-        price: item.price,
-        notes: item.notes || '',
-      }));
-
-      const { error: itemsErr } = await supabase
-        .from('order_items')
-        .insert(itemsData);
-
-      if (itemsErr) {
-        throw new Error(`Order items creation failed: ${itemsErr.message}`);
-      }
-
-      // ONLY reach here if ALL 3 database insertions succeeded cleanly!
       Alert.alert(
         'Order Placed! 🎉',
-        `Order #${order.id.slice(0, 6)} for ${tableNameStr} (Total: ₹${grandTotal}) submitted successfully`
+        `Order #${order.id.slice(0, 6)} for ${tableNameStr} (Total: ₹${order.total || cartTotal}) submitted successfully`
       );
       setCart([]);
       setNotes('');
       setMarkPaid(false);
       setShowCart(false);
     } catch (e) {
-      console.log('[WaiterPunch] submitOrder Error:', e?.message);
-      Alert.alert('Order Placement Failed', e?.message || 'Could not save order to database.');
+      console.log('[FORENSIC_INVENTORY_TRACE] MOBILE_WAITER_PUNCH_ERROR:', e?.message);
+      Alert.alert('Order Placement Failed', e?.message || 'Could not save order.');
     } finally {
       setSubmitting(false);
     }
@@ -223,8 +187,9 @@ export default function WaiterPunchScreen({ route }) {
         <TouchableOpacity
           style={styles.cartHeaderBtn}
           onPress={() => setShowCart(true)}
+          activeOpacity={0.7}
         >
-          <Ionicons name="cart-outline" size={20} color="#ffffff" />
+          <Ionicons name="cart-outline" size={24} color="#0f172a" />
           {cartCount > 0 && (
             <View style={styles.cartBadge}>
               <Text style={styles.cartBadgeText}>{cartCount}</Text>
@@ -233,37 +198,29 @@ export default function WaiterPunchScreen({ route }) {
         </TouchableOpacity>
       </View>
 
-      {/* Order Type Selector */}
-      <View style={styles.typeSelectorContainer}>
-        <TouchableOpacity
-          style={[styles.typeBtn, orderType === 'dine_in' && styles.typeBtnActive]}
-          onPress={() => setOrderType('dine_in')}
-        >
-          <Ionicons
-            name="restaurant-outline"
-            size={18}
-            color={orderType === 'dine_in' ? '#ffffff' : '#64748b'}
-            style={{ marginRight: 6 }}
-          />
-          <Text style={[styles.typeBtnText, orderType === 'dine_in' && styles.typeBtnTextActive]}>
-            Dine-In
-          </Text>
-        </TouchableOpacity>
+      {/* Modern Segmented Control (Dine-In / Takeaway) */}
+      <View style={styles.typeSelectorWrapper}>
+        <View style={styles.segmentedControl}>
+          <TouchableOpacity
+            style={[styles.segmentPill, orderType === 'dine_in' && styles.segmentPillActive]}
+            onPress={() => setOrderType('dine_in')}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.segmentPillText, orderType === 'dine_in' && styles.segmentPillTextActive]}>
+              Dine In
+            </Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.typeBtn, orderType === 'takeaway' && styles.typeBtnActive]}
-          onPress={() => setOrderType('takeaway')}
-        >
-          <Ionicons
-            name="bag-handle-outline"
-            size={18}
-            color={orderType === 'takeaway' ? '#ffffff' : '#64748b'}
-            style={{ marginRight: 6 }}
-          />
-          <Text style={[styles.typeBtnText, orderType === 'takeaway' && styles.typeBtnTextActive]}>
-            Takeaway
-          </Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.segmentPill, orderType === 'takeaway' && styles.segmentPillActive]}
+            onPress={() => setOrderType('takeaway')}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.segmentPillText, orderType === 'takeaway' && styles.segmentPillTextActive]}>
+              Takeaway
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Table Selector Pills (Dine-In only) */}
@@ -364,20 +321,26 @@ export default function WaiterPunchScreen({ route }) {
         />
       )}
 
-      {/* Sticky Bottom Cart Bar */}
+      {/* Sticky Bottom POS Cart Bar */}
       {cartCount > 0 && (
         <View style={styles.bottomCartBar}>
-          <View>
-            <Text style={styles.cartBarItemsCount}>{cartCount} items selected</Text>
-            <Text style={styles.cartBarTotal}>{formatCurrency(cartTotal)}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <View style={styles.cartBarBadge}>
+              <Text style={styles.cartBarBadgeText}>{cartCount}</Text>
+            </View>
+            <View style={{ marginLeft: 10 }}>
+              <Text style={styles.cartBarItemsCount}>{cartCount} {cartCount === 1 ? 'item' : 'items'} in cart</Text>
+              <Text style={styles.cartBarTotal}>{formatCurrency(cartTotal)}</Text>
+            </View>
           </View>
 
           <TouchableOpacity
             style={styles.cartBarBtn}
             onPress={() => setShowCart(true)}
+            activeOpacity={0.8}
           >
             <Text style={styles.cartBarBtnText}>Review Cart</Text>
-            <Ionicons name="arrow-forward" size={18} color="#ffffff" style={{ marginLeft: 6 }} />
+            <Ionicons name="arrow-forward" size={16} color="#ffffff" style={{ marginLeft: 6 }} />
           </TouchableOpacity>
         </View>
       )}
@@ -506,46 +469,65 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 24, fontWeight: '700', color: '#0f172a' },
   cartHeaderBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: COLORS.primary,
+    width: 38,
+    height: 38,
     alignItems: 'center',
-    justify: 'center',
+    justifyContent: 'center',
+    position: 'relative',
   },
   cartBadge: {
     position: 'absolute',
-    top: -4,
-    right: -4,
+    top: -2,
+    right: -2,
     backgroundColor: '#ef4444',
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 4,
     alignItems: 'center',
-    justify: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#ffffff',
   },
-  cartBadgeText: { color: '#ffffff', fontSize: 11, fontWeight: '700' },
-  typeSelectorContainer: {
-    flexDirection: 'row',
+  cartBadgeText: { color: '#ffffff', fontSize: 10, fontWeight: '800' },
+  typeSelectorWrapper: {
     backgroundColor: '#ffffff',
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#f1f5f9',
   },
-  typeBtn: {
-    flex: 1,
-    paddingVertical: 10,
+  segmentedControl: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justify: 'center',
-    borderRadius: 10,
     backgroundColor: '#f1f5f9',
-    marginHorizontal: 4,
+    borderRadius: 12,
+    padding: 3,
   },
-  typeBtnActive: { backgroundColor: COLORS.primary },
-  typeBtnText: { fontSize: 14, fontWeight: '600', color: '#64748b' },
-  typeBtnTextActive: { color: '#ffffff', fontWeight: '700' },
+  segmentPill: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 9,
+  },
+  segmentPillActive: {
+    backgroundColor: '#ffffff',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
+  },
+  segmentPillText: {
+    fontSize: 13.5,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  segmentPillTextActive: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
   tableSection: {
     backgroundColor: '#ffffff',
     paddingVertical: 10,
@@ -633,15 +615,30 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     backgroundColor: '#0f172a',
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingVertical: 12,
     flexDirection: 'row',
-    justify: 'space-between',
+    justifyContent: 'space-between',
     alignItems: 'center',
     elevation: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#1e293b',
   },
-  cartBarItemsCount: { color: '#94a3b8', fontSize: 12 },
-  cartBarTotal: { color: '#ffffff', fontSize: 18, fontWeight: '700' },
+  cartBarBadge: {
+    backgroundColor: COLORS.primary,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cartBarBadgeText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  cartBarItemsCount: { color: '#94a3b8', fontSize: 11, fontWeight: '600' },
+  cartBarTotal: { color: '#ffffff', fontSize: 17, fontWeight: '800' },
   cartBarBtn: { backgroundColor: COLORS.primary, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10, flexDirection: 'row', alignItems: 'center' },
   cartBarBtnText: { color: '#ffffff', fontWeight: '700', fontSize: 14 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.5)', justifyContent: 'flex-end' },

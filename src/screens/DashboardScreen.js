@@ -579,6 +579,23 @@ function convertUnitToItemBase(reqQty, reqUnit, baseUnit) {
           </TouchableOpacity>
         </View>
 
+        {/* Dedicated Support & Help Card */}
+        <View style={{ backgroundColor: '#ffffff', borderRadius: 16, padding: 16, marginTop: 16, borderWidth: 1, borderColor: '#e2e8f0', shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 6, elevation: 2 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+            <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#eff6ff', alignItems: 'center', justify: 'center', marginRight: 10 }}>
+              <Ionicons name="call-outline" size={18} color="#2563eb" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: '#0f172a' }}>CleverOps Dedicated Support</Text>
+              <Text style={{ fontSize: 11, color: '#64748b', fontWeight: '500' }}>Deepak Kumar Soni · 24x7 Onboarding & Technical Help</Text>
+            </View>
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 8, borderTopWidth: 1, borderTopColor: '#f1f5f9' }}>
+            <Text style={{ fontSize: 13, fontWeight: '800', color: '#059669' }}>+91 89492 66064</Text>
+            <Text style={{ fontSize: 11, fontWeight: '600', color: '#64748b' }}>dsoni1281@gmail.com</Text>
+          </View>
+        </View>
+
         {/* Priority 2: Real-time Stock & Menu Alerts (Clean Professional List) */}
         {(lowStockItems.length > 0 || outOfStockMenuItems.length > 0) && (
           <View style={styles.alertCardContainer}>
@@ -907,26 +924,37 @@ function convertUnitToItemBase(reqQty, reqUnit, baseUnit) {
               </TouchableOpacity>
             </View>
             <ScrollView showsVerticalScrollIndicator={false} style={{ marginTop: 10 }}>
-              {INVENTORY_UNITS.map(u => {
-                const isSelected = quickStockUnit?.toLowerCase() === u.toLowerCase();
-                return (
-                  <TouchableOpacity
-                    key={u}
-                    style={[styles.unitOptionRow, isSelected && styles.unitOptionRowSelected]}
-                    onPress={() => {
-                      setQuickStockUnit(u);
-                      setShowQuickUnitPicker(false);
-                    }}
-                  >
-                    <Text style={[styles.unitOptionText, isSelected && styles.unitOptionTextSelected]}>
-                      {u}
-                    </Text>
-                    {isSelected && (
-                      <Ionicons name="checkmark-circle" size={18} color="#4f46e5" />
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
+              {(() => {
+                const base = (quickStockItem?.unit || 'kg').toLowerCase().trim();
+                let availableUnits = ['kg', 'g'];
+                if (['l', 'litre', 'liter', 'ltr', 'ml'].includes(base)) {
+                  availableUnits = ['L', 'ml'];
+                } else if (['kg', 'kilogram', 'kgs', 'g', 'gram'].includes(base)) {
+                  availableUnits = ['kg', 'g'];
+                } else {
+                  availableUnits = Array.from(new Set([quickStockItem?.unit || 'pcs', 'pcs', 'box', 'pack']));
+                }
+                return availableUnits.map(u => {
+                  const isSelected = quickStockUnit?.toLowerCase() === u.toLowerCase();
+                  return (
+                    <TouchableOpacity
+                      key={u}
+                      style={[styles.unitOptionRow, isSelected && styles.unitOptionRowSelected]}
+                      onPress={() => {
+                        setQuickStockUnit(u);
+                        setShowQuickUnitPicker(false);
+                      }}
+                    >
+                      <Text style={[styles.unitOptionText, isSelected && styles.unitOptionTextSelected]}>
+                        {u}
+                      </Text>
+                      {isSelected && (
+                        <Ionicons name="checkmark-circle" size={18} color="#4f46e5" />
+                      )}
+                    </TouchableOpacity>
+                  );
+                });
+              })()}
             </ScrollView>
           </View>
         </TouchableOpacity>
