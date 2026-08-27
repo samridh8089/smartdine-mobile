@@ -1,16 +1,20 @@
+import { getFormattedOrderId } from '../lib/orderUtils';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
-  ActivityIndicator, RefreshControl, Platform, Alert, Vibration,
+  ActivityIndicator, RefreshControl, Platform, Alert, Vibration, ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
+import { CONFIG } from '../shared/config';
 import { startAlarm, stopAlarm, stopAllAlarms } from '../lib/alarmManager';
-import { sendLocalNotification } from '../lib/notifications';
+import { sendLocalNotification, unregisterPushToken } from '../lib/notifications';
 import { COLORS, FONTS, RADIUS, SHADOWS, formatCurrency, timeAgo, getStatusColor, getStatusLabel } from '../lib/theme';
+
+import { getAssignedTableIdsForWaiter, fetchTableAssignments, fetchLiveTableStatus } from '../lib/tableAssignments';
 
 const PENDING_ORDERS_STORAGE_KEY = '@smartdine_waiter_pending_orders';
 
@@ -20,6 +24,10 @@ export default function WaiterOrdersScreen({ route }) {
   const [restaurantId, setRestaurantId] = useState(
     profile?.restaurant_id || profile?.restaurants?.id || null
   );
+
+  const [assignedTableIds, setAssignedTableIds] = useState([]);
+  const [assignedTableNames, setAssignedTableNames] = useState([]);
+  const [assignedTablesWithStatus, setAssignedTablesWithStatus] = useState([]);
 
   useEffect(() => {
     async function fetchMissingRestaurantId() {
@@ -52,32 +60,30 @@ export default function WaiterOrdersScreen({ route }) {
 
   const knownReadyIds = useRef(new Set());
 
-  // Load offline queue on init
-  useEffect(() => {
-    async function loadPendingQueue() {
-      try {
-        const stored = await AsyncStorage.getItem(PENDING_ORDERS_STORAGE_KEY);
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setPendingQueue(parsed);
-          }
-        }
-      } catch (e) {
-        console.log('[WaiterOrders] Load pending queue error:', e?.message);
-      }
-    }
-    loadPendingQueue();
-  }, []);
-
-  const savePendingQueue = async (queue) => {
-    setPendingQueue(queue);
+  // Load table assignments and live status for this waiter
+  const loadAssignedTables = useCallback(async () => {
+    if (!restaurantId || !profile?.id) return;
     try {
-      await AsyncStorage.setItem(PENDING_ORDERS_STORAGE_KEY, JSON.stringify(queue));
+      const [assignments, { tables: liveTbls }] = await Promise.all([
+        fetchTableAssignments(restaurantId),
+        fetchLiveTableStatus(restaurantId)
+      ]);
+      const myAssigns = (assignments || []).filter(a => a.waiter_id === profile.id && a.active !== false);
+      const ids = myAssigns.map(a => a.table_id);
+      const names = myAssigns.map(a => a.table_name || 'Table');
+      setAssignedTableIds(ids);
+      setAssignedTableNames(names);
+
+      const myLiveTables = (liveTbls || []).filter(t => ids.includes(t.id));
+      setAssignedTablesWithStatus(myLiveTables);
     } catch (e) {
-      console.log('[WaiterOrders] Save pending queue error:', e?.message);
+      console.log('[WaiterOrders] loadAssignedTables error:', e?.message);
     }
-  };
+  }, [restaurantId, profile?.id]);
+
+  useEffect(() => {
+    loadAssignedTables();
+  }, [loadAssignedTables]);
 
   const loadOrders = useCallback(async () => {
     if (!restaurantId) { setLoading(false); setRefreshing(false); return; }
@@ -96,10 +102,16 @@ export default function WaiterOrdersScreen({ route }) {
       }
 
       setIsOffline(false);
-      const allOrders = data || [];
+      let allOrders = data || [];
+
+      // Filter by table assignments if assigned
+      if (profile?.role === 'waiter' && assignedTableIds.length > 0) {
+        allOrders = allOrders.filter(o => !o.table_id || assignedTableIds.includes(o.table_id));
+      }
+
       setOrders(allOrders);
 
-      // Bell for new ready orders
+      // Bell for new ready orders scoped to this waiter's tables
       const readyList = allOrders.filter(o => o.status === 'ready');
       let hasNew = false;
       readyList.forEach(o => {
@@ -124,7 +136,7 @@ export default function WaiterOrdersScreen({ route }) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [restaurantId]);
+  }, [restaurantId, assignedTableIds, profile?.role]);
 
   // Flush pending queue when online
   const flushPendingQueue = useCallback(async () => {
@@ -134,7 +146,9 @@ export default function WaiterOrdersScreen({ route }) {
     for (const item of pendingQueue) {
       try {
         if (item.type === 'mark_served') {
-          await supabase.from('orders').update({ status: 'served' }).eq('id', item.orderId);
+          const now = new Date().toISOString();
+          await supabase.from('orders').update({ status: 'served', updated_at: now }).eq('id', item.orderId);
+          await supabase.from('order_batches').update({ status: 'served', served_at: now }).eq('order_id', item.orderId).neq('status', 'cancelled');
         }
       } catch (err) {
         console.log('[WaiterOrders] Failed retrying action:', err?.message);
@@ -182,11 +196,40 @@ export default function WaiterOrdersScreen({ route }) {
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'served' } : o));
     setActionLoading(p => ({ ...p, [orderId]: true }));
     try {
-      const { error } = await supabase
-        .from('orders')
-        .update({ status: 'served' })
-        .eq('id', orderId);
-      if (error) throw error;
+      const now = new Date().toISOString();
+      const staffName = profile?.full_name || 'Waiter';
+
+      let apiSuccess = false;
+      try {
+        const apiRes = await fetch(`${CONFIG.API_BASE_URL}/api/staff/update-order-status`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            orderId,
+            newStatus: 'served',
+            staffName
+          })
+        }).then(r => r.json());
+
+        if (apiRes && apiRes.success) {
+          apiSuccess = true;
+        }
+      } catch (apiErr) {
+        console.log('[WaiterOrders] Backend API update failed, falling back:', apiErr?.message);
+      }
+
+      if (!apiSuccess) {
+        const { error } = await supabase
+          .from('orders')
+          .update({ status: 'served', updated_at: now })
+          .eq('id', orderId);
+        if (error) throw error;
+        await supabase
+          .from('order_batches')
+          .update({ status: 'served', served_at: now, served_by: staffName })
+          .eq('order_id', orderId)
+          .neq('status', 'cancelled');
+      }
       setIsOffline(false);
       await loadOrders();
     } catch (e) {
@@ -203,7 +246,7 @@ export default function WaiterOrdersScreen({ route }) {
     }
   }
 
-  const getItemName = (item) => item.name || item.item_name || item.menu_items?.name || 'Item';
+  const getItemName = (item) => item.menu_item_name || item.name || item.item_name || item.menu_items?.name || 'Item';
   const getItemsSummaryText = (items) => {
     if (!items || !items.length) return 'No items';
     return items.map(i => `${getItemName(i)} x${i.quantity || 1}`).join(', ');
@@ -234,7 +277,7 @@ export default function WaiterOrdersScreen({ route }) {
               color={COLORS.textDark}
               style={{ marginRight: 6 }}
             />
-            <Text style={styles.tableName}>{tableName}</Text>
+            <View><Text style={styles.tableName}>{tableName}</Text><Text style={{ fontSize: 11, fontWeight: '700', color: '#64748b' }}>#{getFormattedOrderId(item, profile?.restaurant_name || '')}</Text></View>
           </View>
 
           <View style={[styles.statusBadge, { backgroundColor: isReady ? '#8b5cf620' : '#06b6d420' }]}>
@@ -294,12 +337,63 @@ export default function WaiterOrdersScreen({ route }) {
           style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#fee2e2', alignItems: 'center', justifyContent: 'center' }}
           onPress={async () => {
             stopAllAlarms();
+            if (profile?.id) await unregisterPushToken(profile.id);
             await supabase.auth.signOut().catch(() => {});
             navigation.replace('Login');
           }}
         >
           <Ionicons name="log-out-outline" size={18} color="#ef4444" />
         </TouchableOpacity>
+      </View>
+
+      {/* My Assigned Tables Section */}
+      <View style={styles.assignedSectionWrapper}>
+        <View style={styles.assignedHeaderRow}>
+          <Text style={styles.assignedSectionHeading}>
+            MY ASSIGNED TABLES ({assignedTablesWithStatus.length > 0 ? assignedTablesWithStatus.length : 'All'})
+          </Text>
+          <Text style={styles.liveSyncLabel}>● Live Status</Text>
+        </View>
+        {assignedTablesWithStatus.length === 0 ? (
+          <View style={styles.unrestrictedBar}>
+            <Ionicons name="restaurant-outline" size={14} color="#047857" style={{ marginRight: 6 }} />
+            <Text style={styles.unrestrictedText}>No table constraints (Serving all tables)</Text>
+          </View>
+        ) : (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tablesScroll}>
+            {assignedTablesWithStatus.map(tbl => {
+              const isOcc = tbl.occupancy_status === 'occupied';
+              const isInactive = tbl.occupancy_status === 'inactive';
+              const statusBg = isInactive ? '#f1f5f9' : isOcc ? '#fee2e2' : '#dcfce7';
+              const statusColor = isInactive ? '#64748b' : isOcc ? '#dc2626' : '#16a34a';
+              const statusLabel = isInactive ? 'Inactive' : isOcc ? 'Occupied' : 'Available';
+
+              return (
+                <View key={tbl.id} style={[styles.assignedTableCard, isOcc && styles.assignedTableCardOccupied]}>
+                  <View style={styles.tableCardTop}>
+                    <Text style={styles.assignedCardTitle}>{tbl.name}</Text>
+                    <View style={[styles.miniStatusBadge, { backgroundColor: statusBg }]}>
+                      <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
+                      <Text style={[styles.miniStatusText, { color: statusColor }]}>{statusLabel}</Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.tableCardDetails}>
+                    <Text style={styles.tableDetailText}>
+                      {tbl.active_order_count > 0 ? `📦 ${tbl.active_order_count} active orders` : 'No active orders'}
+                    </Text>
+                    {tbl.payment_pending && (
+                      <View style={styles.payPendingBadge}>
+                        <Ionicons name="time-outline" size={11} color="#b45309" />
+                        <Text style={styles.payPendingText}>Pay Pending</Text>
+                      </View>
+                    )}
+                  </View>
+                </View>
+              );
+            })}
+          </ScrollView>
+        )}
       </View>
 
       {/* Offline Connectivity Banner */}
@@ -372,6 +466,110 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 24, fontWeight: '700', color: '#0f172a' },
   subtitle: { fontSize: 12, color: '#64748b', marginTop: 2 },
+  assignedSectionWrapper: {
+    backgroundColor: '#ffffff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  assignedHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  assignedSectionHeading: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#64748b',
+    letterSpacing: 0.5,
+  },
+  liveSyncLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#16a34a',
+  },
+  unrestrictedBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ecfdf5',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+  },
+  unrestrictedText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#065f46',
+  },
+  tablesScroll: {
+    gap: 8,
+    paddingVertical: 2,
+  },
+  assignedTableCard: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    minWidth: 140,
+  },
+  assignedTableCardOccupied: {
+    backgroundColor: '#fff1f2',
+    borderColor: '#fecdd3',
+  },
+  tableCardTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  assignedCardTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  miniStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 999,
+  },
+  statusDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    marginRight: 4,
+  },
+  miniStatusText: {
+    fontSize: 9,
+    fontWeight: '700',
+  },
+  tableCardDetails: {
+    gap: 3,
+  },
+  tableDetailText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  payPendingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    backgroundColor: '#fef3c7',
+    borderRadius: 4,
+    gap: 2,
+    alignSelf: 'flex-start',
+  },
+  payPendingText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#b45309',
+  },
   alertPill: { backgroundColor: '#8b5cf6', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999 },
   alertPillText: { color: '#ffffff', fontWeight: '700', fontSize: 12 },
   offlineBanner: {
