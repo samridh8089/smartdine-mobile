@@ -62,13 +62,45 @@ export const COLORS = {
   border: '#e2e8f0',
   borderLight: '#f1f5f9',
 
-  // Shadow
-  shadow: 'rgba(0,0,0,0.08)',
+  // Liquid Glass Design Tokens
+  glassBg: 'rgba(15, 23, 42, 0.75)',
+  glassCard: 'rgba(30, 41, 59, 0.70)',
+  glassBorder: 'rgba(255, 255, 255, 0.22)',
+  glassBorderLight: 'rgba(255, 255, 255, 0.12)',
+  glassAccent: '#059669',
+  glassText: '#ffffff',
+  glassTextMuted: '#94a3b8',
+};
 
-  // Tab Bar
-  tabActive: '#059669',
-  tabInactive: '#94a3b8',
-  tabBackground: '#ffffff',
+export const GLASS_STYLES = {
+  card: {
+    backgroundColor: 'rgba(30, 41, 59, 0.72)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.22)',
+    borderRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.35,
+    shadowRadius: 16,
+    elevation: 10,
+  },
+  pill: {
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.25)',
+    borderRadius: 9999,
+  },
+  button: {
+    backgroundColor: '#059669',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.35)',
+    borderRadius: 14,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    elevation: 8,
+  }
 };
 
 export const FONTS = {
@@ -181,13 +213,8 @@ export function formatOrderId(id) {
   return `#${String(id).slice(-4).toUpperCase()}`;
 }
 
+import { formatExactTimestamp } from './timestamp';
+
 export function timeAgo(dateStr) {
-  if (!dateStr) return '';
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
+  return formatExactTimestamp(dateStr);
 }

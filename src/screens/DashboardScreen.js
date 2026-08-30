@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, RefreshControl,
   ActivityIndicator, TouchableOpacity, Platform, Modal,
-  Alert, TextInput,
+  Alert, TextInput, Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -579,22 +579,7 @@ function convertUnitToItemBase(reqQty, reqUnit, baseUnit) {
           </TouchableOpacity>
         </View>
 
-        {/* Dedicated Support & Help Card */}
-        <View style={{ backgroundColor: '#ffffff', borderRadius: 16, padding: 16, marginTop: 16, borderWidth: 1, borderColor: '#e2e8f0', shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 6, elevation: 2 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-            <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#eff6ff', alignItems: 'center', justify: 'center', marginRight: 10 }}>
-              <Ionicons name="call-outline" size={18} color="#2563eb" />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 13, fontWeight: '700', color: '#0f172a' }}>CleverOps Dedicated Support</Text>
-              <Text style={{ fontSize: 11, color: '#64748b', fontWeight: '500' }}>Deepak Kumar Soni · 24x7 Onboarding & Technical Help</Text>
-            </View>
-          </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 8, borderTopWidth: 1, borderTopColor: '#f1f5f9' }}>
-            <Text style={{ fontSize: 13, fontWeight: '800', color: '#059669' }}>+91 89492 66064</Text>
-            <Text style={{ fontSize: 11, fontWeight: '600', color: '#64748b' }}>dsoni1281@gmail.com</Text>
-          </View>
-        </View>
+
 
         {/* Priority 2: Real-time Stock & Menu Alerts (Clean Professional List) */}
         {(lowStockItems.length > 0 || outOfStockMenuItems.length > 0) && (
@@ -1110,28 +1095,21 @@ function convertUnitToItemBase(reqQty, reqUnit, baseUnit) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f8fafc' },
-  scrollContent: { padding: 16 },
+  container: { flex: 1, backgroundColor: '#f1f5f9' },
+  scrollContent: { padding: 16, paddingBottom: 100 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   greeting: { fontSize: 13, color: '#64748b', fontWeight: '600' },
-  restaurantName: { fontSize: 22, fontWeight: '700', color: '#0f172a' },
-  avatarCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: COLORS.primary,
-    alignItems: 'center',
-    justify: 'center',
-  },
-  avatarText: { color: '#ffffff', fontWeight: '700', fontSize: 18 },
+  restaurantName: { fontSize: 24, fontWeight: '800', color: '#0f172a' },
+  roleBadge: { backgroundColor: COLORS.primaryLight, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
+  roleText: { fontSize: 11, fontWeight: '800', color: COLORS.primary },
+  logoutBtn: { padding: 8, borderRadius: 8, backgroundColor: '#fee2e2' },
   offlineBanner: {
-    backgroundColor: '#3b82f6',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 10,
     flexDirection: 'row',
     alignItems: 'center',
-    justify: 'center',
+    backgroundColor: '#dc2626',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
     marginBottom: 16,
   },
   offlineBannerText: { color: '#ffffff', fontWeight: '600', fontSize: 12 },

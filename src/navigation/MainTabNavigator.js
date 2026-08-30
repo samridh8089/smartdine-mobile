@@ -1,16 +1,14 @@
-import React, { useState } from 'react';
+import React from 'react';
+import { StyleSheet } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { Text, View, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
 import DashboardScreen from '../screens/DashboardScreen';
 import OrdersScreen from '../screens/OrdersScreen';
 import WaiterPunchScreen from '../screens/WaiterPunchScreen';
 import KitchenScreen from '../screens/KitchenScreen';
 import ReportsScreen from '../screens/ReportsScreen';
+import AccountScreen from '../screens/AccountScreen';
 import { COLORS, FONTS } from '../lib/theme';
-import { supabase } from '../lib/supabase';
 
 const Tab = createBottomTabNavigator();
 
@@ -32,76 +30,6 @@ function TabIcon({ routeName, focused, color }) {
     default:
       return <Ionicons name="ellipse" size={size} color={color} />;
   }
-}
-
-function AccountScreen({ route }) {
-  const profile = route?.params?.profile ?? {};
-  const navigation = useNavigation();
-  const [signingOut, setSigningOut] = useState(false);
-
-  const handleSignOut = () => {
-    Alert.alert(
-      'Sign Out',
-      `Are you sure you want to sign out?\n\nYou can log in with any other account after this.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Sign Out',
-          style: 'destructive',
-          onPress: async () => {
-            setSigningOut(true);
-            try {
-              await supabase.auth.signOut();
-            } catch (e) {
-              console.log('[AccountScreen] signOut error:', e?.message);
-            }
-            // Navigate directly to Login regardless of signOut result
-            try {
-              navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
-            } catch (e2) {
-              console.log('[AccountScreen] nav reset error:', e2?.message);
-            }
-            setSigningOut(false);
-          },
-        },
-      ]
-    );
-  };
-
-  const restaurantName = profile.restaurant_name || profile.restaurants?.name || '';
-
-  return (
-    <SafeAreaView style={styles.accountContainer} edges={['top', 'left', 'right']}>
-      <View style={styles.avatarCircle}>
-        <Text style={styles.avatarText}>{profile.full_name?.[0]?.toUpperCase() || 'S'}</Text>
-      </View>
-      <Text style={styles.nameText}>{profile.full_name || 'Staff User'}</Text>
-      <Text style={styles.emailText}>{profile.email || ''}</Text>
-      {restaurantName ? (
-        <Text style={styles.restaurantName}>{restaurantName}</Text>
-      ) : null}
-
-      <View style={styles.roleBadge}>
-        <Text style={styles.roleBadgeText}>{profile.role?.toUpperCase() || 'OWNER'}</Text>
-      </View>
-
-      <Text style={styles.footerBrand}>Powered by CleverOps · cleverops.in</Text>
-
-      <TouchableOpacity
-        style={[styles.signOutBtn, signingOut && { opacity: 0.6 }]}
-        onPress={handleSignOut}
-        disabled={signingOut}
-        activeOpacity={0.8}
-      >
-        {signingOut ? (
-          <ActivityIndicator size="small" color="#ef4444" style={{ marginRight: 8 }} />
-        ) : (
-          <Ionicons name="log-out-outline" size={20} color="#ef4444" style={{ marginRight: 8 }} />
-        )}
-        <Text style={styles.signOutBtnText}>{signingOut ? 'Signing Out...' : 'Sign Out'}</Text>
-      </TouchableOpacity>
-    </SafeAreaView>
-  );
 }
 
 const styles = StyleSheet.create({
@@ -196,16 +124,17 @@ export default function MainTabNavigator({ route }) {
         tabBarActiveTintColor: COLORS.primary,
         tabBarInactiveTintColor: '#94a3b8',
         tabBarStyle: {
-          backgroundColor: '#ffffff',
-          borderTopColor: '#f1f5f9',
+          backgroundColor: 'rgba(255, 255, 255, 0.92)',
+          borderTopColor: 'rgba(226, 232, 240, 0.8)',
           borderTopWidth: 1,
           height: 64,
           paddingBottom: 8,
           paddingTop: 6,
-          elevation: 12,
+          elevation: 16,
           shadowColor: '#000',
-          shadowOpacity: 0.08,
-          shadowRadius: 10,
+          shadowOpacity: 0.12,
+          shadowRadius: 14,
+          shadowOffset: { width: 0, height: -4 },
         },
         tabBarLabelStyle: { ...FONTS.semiBold, fontSize: 11 },
         tabBarIcon: ({ focused, color }) => (

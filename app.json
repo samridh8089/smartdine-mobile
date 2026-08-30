@@ -62,7 +62,8 @@
         {
           "microphonePermission": false
         }
-      ]
+      ],
+      "expo-updates"
     ],
     "web": {
       "favicon": "./assets/favicon.png"
@@ -74,7 +75,7 @@
     },
     "updates": {
       "url": "https://u.expo.dev/2fb0358d-6e46-4269-996d-0614a98052e1",
-      "checkAutomatically": "ON_LOAD",
+      "checkAutomatically": "NEVER",
       "fallbackToCacheTimeout": 0
     },
     "runtimeVersion": {

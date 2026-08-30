@@ -314,6 +314,17 @@ export default function KitchenScreen({ route }) {
         if (batch.order_id) {
           await supabase.from('orders').update({ status: newStatus }).eq('id', batch.order_id);
         }
+        if (['served', 'completed', 'ready'].includes(newStatus)) {
+          try {
+            await supabase
+              .from('inventory_reservations')
+              .update({ status: 'CONSUMED', updated_at: now })
+              .or(`batch_id.eq.${targetId},order_id.eq.${batch.order_id}`)
+              .eq('status', 'ACTIVE');
+          } catch (resErr) {
+            console.log('[KitchenScreen] Reservation update notice:', resErr?.message);
+          }
+        }
       }
       setIsOffline(false);
       setLastActionLog(`✅ [SUCCESS] Batch #${targetId.slice(0, 6)} updated to ${newStatus.toUpperCase()}`);
@@ -869,7 +880,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    justify: 'center',
   },
   offlineBannerText: { color: '#ffffff', fontWeight: '600', fontSize: 12 },
   alertBanner: {

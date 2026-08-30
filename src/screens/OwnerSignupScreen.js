@@ -79,6 +79,23 @@ export default function OwnerSignupScreen({ navigation }) {
   const [plansData, setPlansData] = useState(PLANS);
 
   useEffect(() => {
+    async function forceCleanStateForSignup() {
+      try {
+        await supabase.auth.signOut().catch(() => {});
+        const keys = [
+          '@smartdine_user_session',
+          '@smartdine_kitchen_pending_queue',
+          '@smartdine_waiter_pending_orders',
+          '@smartdine_waiter_pending_calls',
+          '@smartdine_owner_pending_orders'
+        ];
+        await AsyncStorage.multiRemove(keys).catch(() => {});
+      } catch (e) {
+        console.log('[OwnerSignup] Force clean state warning:', e?.message);
+      }
+    }
+    forceCleanStateForSignup();
+
     async function loadLivePricing() {
       try {
         const { data: dbPlans } = await supabase.from('pricing_plans').select('*');
@@ -385,7 +402,7 @@ export default function OwnerSignupScreen({ navigation }) {
         const { data: authUserData } = await supabase.auth.getUser();
         const currentUser = authUserData?.user;
 
-        if (currentUser?.id) {
+        if (currentUser?.id && currentUser?.email?.toLowerCase() === cleanEmail) {
           const { data: existingByOwner } = await supabase
             .from('restaurants')
             .select('id, name')
@@ -399,6 +416,10 @@ export default function OwnerSignupScreen({ navigation }) {
             setIsProcessingPay(false);
             return; // STOP! DO NOT CREATE RAZORPAY ORDER OR OPEN CHECKOUT!
           }
+        } else if (currentUser?.id) {
+          // Lingering session from another owner detected! Clear old session immediately.
+          console.log('[OwnerSignup] Clearing lingering session of old user:', currentUser.email);
+          await supabase.auth.signOut().catch(() => {});
         }
 
         // Query profiles and restaurants by email

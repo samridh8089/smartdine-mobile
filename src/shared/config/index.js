@@ -3,8 +3,9 @@ import Constants from 'expo-constants';
 const extra = Constants.expoConfig?.extra || {};
 
 export const CONFIG = {
-  SUPABASE_URL: process.env.EXPO_PUBLIC_SUPABASE_URL || extra.EXPO_PUBLIC_SUPABASE_URL || 'https://mock-supabase.smartdine.internal',
+  SUPABASE_URL: process.env.EXPO_PUBLIC_SUPABASE_URL || extra.EXPO_PUBLIC_SUPABASE_URL || 'https://tiuwfhkrjvtkshebdwlp.supabase.co',
   SUPABASE_ANON_KEY: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || extra.EXPO_PUBLIC_SUPABASE_ANON_KEY || 'mock-anon-key',
+  API_BASE_URL: process.env.EXPO_PUBLIC_API_URL || extra.EXPO_PUBLIC_API_URL || 'https://www.cleverops.in',
   NOTIFICATION_CHANNEL_ID: 'smartdine-urgent-v3',
   NOTIFICATION_CHANNEL_NAME: 'Urgent Orders & Calls',
   PROJECT_ID: extra.eas?.projectId || '2fb0358d-6e46-4269-996d-0614a98052e1',

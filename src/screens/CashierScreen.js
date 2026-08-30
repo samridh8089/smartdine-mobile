@@ -1,3 +1,4 @@
+import { getFormattedOrderId } from '../lib/orderUtils';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
@@ -88,7 +89,7 @@ export default function CashierScreen({ route }) {
     }
   }
 
-  const getItemName = (item) => item.name || item.item_name || item.menu_items?.name || 'Item';
+  const getItemName = (item) => item.menu_item_name || item.name || item.item_name || item.menu_items?.name || 'Item';
   const getItemsSummaryText = (items) => {
     if (!items || !items.length) return 'No items';
     return items.map(i => `${getItemName(i)} x${i.quantity || 1}`).join(', ');
@@ -169,7 +170,7 @@ export default function CashierScreen({ route }) {
                       color={COLORS.textDark}
                       style={{ marginRight: 6 }}
                     />
-                    <Text style={styles.tableName}>{tableName}</Text>
+                    <View><Text style={styles.tableName}>{tableName}</Text><Text style={{ fontSize: 11, fontWeight: '700', color: '#64748b' }}>#{getFormattedOrderId(item, profile?.restaurant_name || '')}</Text></View>
                   </View>
 
                   <View style={[styles.statusBadge, { backgroundColor: statusColor + '20' }]}>

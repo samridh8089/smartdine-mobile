@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
   ActivityIndicator, KeyboardAvoidingView, Platform,
-  Animated, StatusBar, ScrollView, TouchableWithoutFeedback, Keyboard, Alert,
+  Animated, StatusBar, ScrollView, TouchableWithoutFeedback, Keyboard, Alert, Image, Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -19,46 +19,39 @@ export default function LoginScreen({ navigation }) {
   const [checkingSession, setCheckingSession] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
 
+  // Forgot password modal state
+  const [forgotModalVisible, setForgotModalVisible] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotLoading, setForgotLoading] = useState(false);
+
+  // Unverified staff state & resend
+  const [unverifiedEmail, setUnverifiedEmail] = useState('');
+  const [resendingVerification, setResendingVerification] = useState(false);
+
   const fadeAnim = useState(new Animated.Value(0))[0];
   const slideAnim = useState(new Animated.Value(30))[0];
 
-  const [checkingUpdate, setCheckingUpdate] = useState(false);
-
-  const handleCheckUpdate = async () => {
-    if (__DEV__) {
-      Alert.alert('You\'re up to date', 'You\'re using the latest version of CleverOps.');
+  const handleResendVerificationEmail = async () => {
+    const target = (unverifiedEmail || email).trim().toLowerCase();
+    if (!target || !target.includes('@')) {
+      Alert.alert('Invalid Email', 'Please enter a valid email address.');
       return;
     }
-    setCheckingUpdate(true);
+    setResendingVerification(true);
     try {
-      const update = await Updates.checkForUpdateAsync();
-      if (update.isAvailable) {
-        Alert.alert(
-          'Update available',
-          'New features and improvements are ready.',
-          [
-            {
-              text: 'Update Now',
-              onPress: async () => {
-                try {
-                  await Updates.fetchUpdateAsync();
-                  await Updates.reloadAsync();
-                } catch (fetchErr) {
-                  Alert.alert('Update unavailable', 'Please try again later.');
-                }
-              },
-            },
-          ],
-          { cancelable: false }
-        );
-      } else {
-        Alert.alert('You\'re up to date', 'You\'re using the latest version of CleverOps.');
-      }
-    } catch (error) {
-      console.log('[OTAUpdate] Error:', error?.message);
-      Alert.alert('Update unavailable', 'Please try again later.');
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email: target,
+      });
+      if (error) throw error;
+      Alert.alert(
+        'Verification Email Sent',
+        `A new verification link has been sent to ${target}. Please check your inbox and verify your email to log in.`
+      );
+    } catch (e) {
+      Alert.alert('Resend Failed', e?.message || 'Could not resend verification email.');
     } finally {
-      setCheckingUpdate(false);
+      setResendingVerification(false);
     }
   };
 
@@ -91,7 +84,7 @@ export default function LoginScreen({ navigation }) {
     try {
       const { data: profile, error } = await supabase
         .from('profiles')
-        .select('*, restaurants(name)')
+        .select('*, restaurants(name, settings)')
         .eq('id', userId)
         .maybeSingle();
 
@@ -103,8 +96,41 @@ export default function LoginScreen({ navigation }) {
         return;
       }
 
+      // Check staff email verification if not owner or super admin
+      const isOwnerOrSuper = profile.role === 'owner' || profile.role === 'super_admin';
+      if (!isOwnerOrSuper) {
+        const { data: userData } = await supabase.auth.getUser();
+        const emailConfirmed = userData?.user?.email_confirmed_at || profile.is_verified === true || profile.verification_status === 'verified';
+        if (!emailConfirmed && (profile.is_verified === false || profile.verification_status === 'pending_verification')) {
+          await supabase.auth.signOut().catch(() => {});
+          setCheckingSession(false);
+          setErrorMsg('Your email is not verified yet. Please verify your email before signing in, or use Resend Verification below.');
+          setUnverifiedEmail(profile.email || userData?.user?.email || '');
+          animateIn();
+          return;
+        }
+      }
+
+      // Check active status
+      const staffMeta = profile.restaurants?.settings?.staff_metadata || {};
+      const metaActive = staffMeta[userId]?.is_active;
+      const isProfileActive = profile.is_active !== false && metaActive !== false;
+
+      if (!isProfileActive && !isOwnerOrSuper) {
+        await supabase.auth.signOut().catch(() => {});
+        setCheckingSession(false);
+        setErrorMsg('Your staff account has been deactivated. Please contact your manager or administrator.');
+        animateIn();
+        return;
+      }
+
       if (profile.restaurants?.name && !profile.restaurant_name) {
         profile.restaurant_name = profile.restaurants.name;
+      }
+
+      // Resolve department if not in profiles column directly
+      if (!profile.department && staffMeta[userId]?.department) {
+        profile.department = staffMeta[userId].department;
       }
 
       setTimeout(() => {
@@ -135,11 +161,16 @@ export default function LoginScreen({ navigation }) {
       case 'cashier':
         navigation.replace('CashierApp', { profile });
         break;
+      case 'supervisor':
+        navigation.replace('SupervisorApp', { profile });
+        break;
+      case 'manager':
+        navigation.replace('ManagerApp', { profile });
+        break;
       case 'super_admin':
         navigation.replace('SuperAdmin', { profile });
         break;
       case 'owner':
-      case 'manager':
         navigation.replace('MainApp', { profile });
         break;
       default:
@@ -190,6 +221,29 @@ export default function LoginScreen({ navigation }) {
     }
   }
 
+  async function handleSendResetPassword() {
+    const clean = forgotEmail.trim().toLowerCase();
+    if (!clean || !clean.includes('@')) {
+      Alert.alert('Invalid Email', 'Please enter a valid email address.');
+      return;
+    }
+    setForgotLoading(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(clean);
+      if (error) throw error;
+      Alert.alert(
+        'Reset Instructions Sent',
+        `If an account is associated with ${clean}, password reset instructions have been sent.`
+      );
+      setForgotModalVisible(false);
+      setForgotEmail('');
+    } catch (e) {
+      Alert.alert('Password Reset', e?.message || 'Failed to send password reset email.');
+    } finally {
+      setForgotLoading(false);
+    }
+  }
+
   if (checkingSession) {
     return (
       <View style={styles.splashContainer}>
@@ -205,7 +259,7 @@ export default function LoginScreen({ navigation }) {
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#f8fafc" />
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -217,42 +271,77 @@ export default function LoginScreen({ navigation }) {
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
-            {/* Brand Header */}
+            {/* Top Brand Header */}
             <View style={styles.brandHeader}>
               <View style={styles.logoCircle}>
-                <MaterialCommunityIcons name="silverware-fork-knife" size={30} color="#ffffff" />
+                <MaterialCommunityIcons name="silverware-fork-knife" size={32} color="#ffffff" />
               </View>
               <Text style={styles.appName}>CleverOps</Text>
-              <Text style={styles.appTagline}>Staff & Operations Portal</Text>
+              <Text style={styles.appTagline}>Smart Restaurant Operations</Text>
             </View>
 
-            {/* Form Card */}
-            <Animated.View style={[styles.card, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
+            {/* Login Card */}
+            <Animated.View
+              style={[
+                styles.card,
+                {
+                  opacity: fadeAnim,
+                  transform: [{ translateY: slideAnim }],
+                },
+              ]}
+            >
               <Text style={styles.cardTitle}>Sign In</Text>
-              <Text style={styles.cardSubtitle}>Enter your restaurant staff credentials</Text>
 
-              {/* Error Banner */}
-              {errorMsg ? (
+              {/* Error Message */}
+              {!!errorMsg && (
                 <View style={styles.errorBox}>
-                  <Ionicons name="alert-circle-outline" size={16} color="#dc2626" style={{ marginRight: 6 }} />
-                  <Text style={styles.errorText}>{errorMsg}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+                    <Ionicons name="alert-circle-outline" size={18} color="#dc2626" style={{ marginRight: 8, marginTop: 2 }} />
+                    <Text style={[styles.errorText, { flex: 1 }]}>{errorMsg}</Text>
+                  </View>
+                  {!!unverifiedEmail && (
+                    <TouchableOpacity
+                      style={{
+                        marginTop: 10,
+                        backgroundColor: '#dc2626',
+                        paddingVertical: 8,
+                        paddingHorizontal: 14,
+                        borderRadius: 8,
+                        alignItems: 'center',
+                        flexDirection: 'row',
+                        justifyContent: 'center',
+                        gap: 6
+                      }}
+                      onPress={handleResendVerificationEmail}
+                      disabled={resendingVerification}
+                    >
+                      {resendingVerification ? (
+                        <ActivityIndicator size="small" color="#ffffff" />
+                      ) : (
+                        <>
+                          <Ionicons name="mail-outline" size={15} color="#ffffff" />
+                          <Text style={{ color: '#ffffff', fontSize: 12, fontWeight: '700' }}>Resend Verification Email</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  )}
                 </View>
-              ) : null}
+              )}
 
               {/* Email Field */}
               <View style={styles.inputContainer}>
-                <Text style={styles.inputLabel}>Email Address</Text>
+                <Text style={styles.inputLabel}>EMAIL ADDRESS</Text>
                 <View style={styles.inputWrapper}>
-                  <Ionicons name="mail-outline" size={18} color="#94a3b8" style={styles.inputIcon} />
+                  <Ionicons name="mail-outline" size={20} color="#94a3b8" style={styles.inputIcon} />
                   <TextInput
                     style={styles.input}
-                    placeholder="owner@restaurant.com"
+                    placeholder="staff@restaurant.com"
                     placeholderTextColor="#94a3b8"
                     keyboardType="email-address"
                     autoCapitalize="none"
                     autoCorrect={false}
                     value={email}
-                    onChangeText={(t) => { setEmail(t); setErrorMsg(''); }}
+                    onChangeText={(t) => { setEmail(t); setErrorMsg(''); setUnverifiedEmail(''); }}
                     returnKeyType="next"
                     editable={!loading}
                   />
@@ -261,16 +350,21 @@ export default function LoginScreen({ navigation }) {
 
               {/* Password Field */}
               <View style={styles.inputContainer}>
-                <Text style={styles.inputLabel}>Password</Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <Text style={styles.inputLabel}>PASSWORD</Text>
+                  <TouchableOpacity onPress={() => { setForgotEmail(email); setForgotModalVisible(true); }}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: COLORS.primary }}>Forgot Password?</Text>
+                  </TouchableOpacity>
+                </View>
                 <View style={styles.inputWrapper}>
-                  <Ionicons name="lock-closed-outline" size={18} color="#94a3b8" style={styles.inputIcon} />
+                  <Ionicons name="lock-closed-outline" size={20} color="#94a3b8" style={styles.inputIcon} />
                   <TextInput
                     style={styles.input}
                     placeholder="••••••••"
                     placeholderTextColor="#94a3b8"
                     secureTextEntry={!showPassword}
                     value={password}
-                    onChangeText={(t) => { setPassword(t); setErrorMsg(''); }}
+                    onChangeText={(t) => { setPassword(t); setErrorMsg(''); setUnverifiedEmail(''); }}
                     returnKeyType="done"
                     onSubmitEditing={handleLogin}
                     editable={!loading}
@@ -302,28 +396,95 @@ export default function LoginScreen({ navigation }) {
                 )}
               </TouchableOpacity>
 
-              {/* Single Polished OTA Check for Updates Button */}
+              {/* Create Restaurant Account (Owner Signup) */}
               <TouchableOpacity
-                style={styles.updateBtn}
-                onPress={handleCheckUpdate}
-                disabled={checkingUpdate}
-                activeOpacity={0.7}
+                style={styles.signupBtn}
+                onPress={async () => {
+                  try {
+                    await supabase.auth.signOut().catch(() => {});
+                    await AsyncStorage.clear().catch(() => {});
+                  } catch (e) {}
+                  navigation.navigate('OwnerSignup');
+                }}
+                activeOpacity={0.8}
               >
-                {checkingUpdate ? (
-                  <ActivityIndicator size="small" color="#0284c7" style={{ marginRight: 8 }} />
-                ) : (
-                  <Ionicons name="cloud-download-outline" size={18} color="#0284c7" style={{ marginRight: 8 }} />
-                )}
-                <Text style={styles.updateBtnText}>
-                  {checkingUpdate ? 'Checking for updates...' : 'Check for Updates'}
-                </Text>
+                <MaterialCommunityIcons name="store-plus" size={20} color="#059669" style={{ marginRight: 8 }} />
+                <Text style={styles.signupBtnText}>Create Restaurant Account</Text>
               </TouchableOpacity>
+              {/* Dedicated Support Contact Card */}
+              <View style={{ backgroundColor: '#ffffff', borderRadius: 16, padding: 14, marginTop: 16, borderWidth: 1, borderColor: '#cbd5e1', width: '100%', shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 6, elevation: 2 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                  <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#eff6ff', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                    <Ionicons name="headset-outline" size={16} color="#2563eb" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 13, fontWeight: '800', color: '#0f172a' }}>CleverOps 24x7 Support</Text>
+                    <Text style={{ fontSize: 11, color: '#64748b', fontWeight: '500' }}>Deepak Kumar Soni · Technical Help</Text>
+                  </View>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 6, borderTopWidth: 1, borderTopColor: '#f1f5f9' }}>
+                  <TouchableOpacity onPress={() => Linking.openURL('tel:+918949266064')}>
+                    <Text style={{ fontSize: 11, fontWeight: '800', color: '#2563eb' }}>📞 89492 66064</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => Linking.openURL('tel:+917742054535')}>
+                    <Text style={{ fontSize: 11, fontWeight: '800', color: '#059669' }}>📞 77420 54535</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
             </Animated.View>
 
             <Text style={styles.footerText}>Powered by CleverOps · cleverops.in</Text>
           </ScrollView>
         </TouchableWithoutFeedback>
       </KeyboardAvoidingView>
+
+      {/* Forgot Password Modal */}
+      <Modal
+        visible={forgotModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setForgotModalVisible(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+          <View style={{ width: '100%', maxWidth: 360, backgroundColor: '#ffffff', borderRadius: 20, padding: 24, elevation: 6 }}>
+            <Text style={{ fontSize: 18, fontWeight: '700', color: '#0f172a', marginBottom: 8 }}>Reset Password</Text>
+            <Text style={{ fontSize: 13, color: '#64748b', marginBottom: 16 }}>
+              Enter your registered email address to receive password reset instructions.
+            </Text>
+            <View style={[styles.inputWrapper, { marginBottom: 16 }]}>
+              <Ionicons name="mail-outline" size={20} color="#94a3b8" style={styles.inputIcon} />
+              <TextInput
+                style={styles.input}
+                placeholder="staff@restaurant.com"
+                placeholderTextColor="#94a3b8"
+                keyboardType="email-address"
+                autoCapitalize="none"
+                value={forgotEmail}
+                onChangeText={setForgotEmail}
+              />
+            </View>
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12 }}>
+              <TouchableOpacity
+                onPress={() => setForgotModalVisible(false)}
+                style={{ paddingVertical: 10, paddingHorizontal: 16 }}
+              >
+                <Text style={{ fontSize: 13, fontWeight: '600', color: '#64748b' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleSendResetPassword}
+                disabled={forgotLoading}
+                style={{ backgroundColor: COLORS.primary, paddingVertical: 10, paddingHorizontal: 20, borderRadius: 10 }}
+              >
+                {forgotLoading ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#ffffff' }}>Send Link</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -481,6 +642,22 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '700',
+  },
+  signupBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ecfdf5',
+    borderWidth: 1.5,
+    borderColor: '#a7f3d0',
+    height: 50,
+    borderRadius: 12,
+    marginTop: 12,
+  },
+  signupBtnText: {
+    color: '#059669',
+    fontSize: 15,
+    fontWeight: '800',
   },
   updateBtn: {
     flexDirection: 'row',

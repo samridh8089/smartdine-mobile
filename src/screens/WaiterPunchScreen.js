@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../lib/supabase';
 import { COLORS, FONTS, RADIUS, SHADOWS, formatCurrency } from '../lib/theme';
 import { CONFIG } from '../shared/config';
@@ -25,18 +26,20 @@ export default function WaiterPunchScreen({ route }) {
   const [notes, setNotes] = useState('');
   const [markPaid, setMarkPaid] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [showCart, setShowCart] = useState(false);
 
-  useEffect(() => { loadData(); }, [restaurantId]);
+  const [selectedVariantItem, setSelectedVariantItem] = useState(null);
+  const [variantModalVisible, setVariantModalVisible] = useState(false);
 
   const loadData = useCallback(async () => {
     if (!restaurantId) { setLoading(false); return; }
     try {
       const [{ data: t }, { data: c }, { data: m }] = await Promise.all([
         supabase.from('tables').select('*').eq('restaurant_id', restaurantId).order('name'),
-        supabase.from('categories').select('*').eq('restaurant_id', restaurantId).order('sort_order'),
-        supabase.from('menu_items').select('*').eq('restaurant_id', restaurantId).eq('is_available', true).order('name'),
+        supabase.from('categories').select('*').eq('restaurant_id', restaurantId),
+        supabase.from('menu_items').select('*, menu_item_variants(*)').eq('restaurant_id', restaurantId).eq('is_available', true).order('name'),
       ]);
       const tableList = t || [];
       setTables(tableList);
@@ -47,27 +50,66 @@ export default function WaiterPunchScreen({ route }) {
       console.log('WaiterPunch load error:', e?.message);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, [restaurantId]);
 
-  function addToCart(item) {
-    setCart(prev => {
-      const existing = prev.find(c => c.id === item.id);
-      if (existing) return prev.map(c => c.id === item.id ? { ...c, quantity: c.quantity + 1 } : c);
-      return [...prev, { ...item, quantity: 1, notes: '' }];
-    });
+  useEffect(() => { loadData(); }, [restaurantId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadData();
+    }, [loadData])
+  );
+
+  function handleItemClick(item) {
+    const vars = item.menu_item_variants || item.variants || [];
+    if (vars.length > 0) {
+      setSelectedVariantItem(item);
+      setVariantModalVisible(true);
+    } else {
+      addToCart(item, null);
+    }
   }
 
-  function removeFromCart(itemId) {
+  function addToCart(item, variant = null) {
+    const variantId = variant ? variant.id : null;
+    const variantName = variant ? variant.name : null;
+    const itemPrice = variant ? Number(variant.price) : Number(item.price);
+    const cartKey = variantId ? `${item.id}_${variantId}` : `${item.id}`;
+
     setCart(prev => {
-      const existing = prev.find(c => c.id === itemId);
-      if (existing?.quantity === 1) return prev.filter(c => c.id !== itemId);
-      return prev.map(c => c.id === itemId ? { ...c, quantity: c.quantity - 1 } : c);
+      const existing = prev.find(c => c.cartKey === cartKey);
+      if (existing) {
+        return prev.map(c => c.cartKey === cartKey ? { ...c, quantity: c.quantity + 1 } : c);
+      }
+      return [...prev, {
+        ...item,
+        cartKey,
+        variantId,
+        variantName,
+        price: itemPrice,
+        quantity: 1,
+        notes: ''
+      }];
+    });
+
+    if (variantModalVisible) {
+      setVariantModalVisible(false);
+      setSelectedVariantItem(null);
+    }
+  }
+
+  function removeFromCart(cartKey) {
+    setCart(prev => {
+      const existing = prev.find(c => c.cartKey === cartKey);
+      if (existing?.quantity === 1) return prev.filter(c => c.cartKey !== cartKey);
+      return prev.map(c => c.cartKey === cartKey ? { ...c, quantity: c.quantity - 1 } : c);
     });
   }
 
   function getQuantity(itemId) {
-    return cart.find(c => c.id === itemId)?.quantity || 0;
+    return cart.filter(c => c.id === itemId).reduce((sum, c) => sum + c.quantity, 0);
   }
 
   const cartTotal = cart.reduce((s, i) => s + i.price * i.quantity, 0);
@@ -97,6 +139,8 @@ export default function WaiterPunchScreen({ route }) {
         tableId: orderType === 'dine_in' ? selectedTable?.id : null,
         items: cart.map(item => ({
           menuItemId: item.id,
+          variantId: item.variantId || null,
+          variantName: item.variantName || null,
           quantity: item.quantity,
           notes: item.notes || '',
           price: item.price
@@ -140,6 +184,8 @@ export default function WaiterPunchScreen({ route }) {
 
   const renderMenuItem = ({ item }) => {
     const qty = getQuantity(item.id);
+    const variants = item.menu_item_variants || item.variants || [];
+    const hasVariants = variants.length > 0;
 
     return (
       <View style={styles.menuCard}>
@@ -147,31 +193,28 @@ export default function WaiterPunchScreen({ route }) {
           <View style={[styles.vegIndicator, { borderColor: item.is_veg === false ? '#ef4444' : '#22c55e' }]}>
             <View style={[styles.vegIndicatorInner, { backgroundColor: item.is_veg === false ? '#ef4444' : '#22c55e' }]} />
           </View>
-          <Text style={styles.menuPrice}>{formatCurrency(item.price)}</Text>
+          <Text style={styles.menuPrice}>
+            {hasVariants ? `₹${Math.min(...variants.map(v => Number(v.price)))}+` : formatCurrency(item.price)}
+          </Text>
         </View>
 
         <Text style={styles.menuTitle} numberOfLines={2}>{item.name}</Text>
+        {hasVariants && (
+          <Text style={{ fontSize: 10, color: '#2563eb', fontWeight: '700', marginTop: 2 }}>
+            {variants.length} Portions Available
+          </Text>
+        )}
 
         <View style={styles.menuCardFooter}>
-          {qty === 0 ? (
-            <TouchableOpacity
-              style={styles.addBtn}
-              onPress={() => addToCart(item)}
-            >
-              <Ionicons name="add" size={16} color={COLORS.primary} style={{ marginRight: 4 }} />
-              <Text style={styles.addBtnText}>Add</Text>
-            </TouchableOpacity>
-          ) : (
-            <View style={styles.qtyStepper}>
-              <TouchableOpacity style={styles.stepperBtn} onPress={() => removeFromCart(item.id)}>
-                <Ionicons name="remove" size={16} color="#0f172a" />
-              </TouchableOpacity>
-              <Text style={styles.stepperQty}>{qty}</Text>
-              <TouchableOpacity style={styles.stepperBtn} onPress={() => addToCart(item)}>
-                <Ionicons name="add" size={16} color="#0f172a" />
-              </TouchableOpacity>
-            </View>
-          )}
+          <TouchableOpacity
+            style={[styles.addBtn, hasVariants && { backgroundColor: '#eff6ff', borderColor: '#2563eb' }]}
+            onPress={() => handleItemClick(item)}
+          >
+            <Ionicons name="add" size={16} color={hasVariants ? '#2563eb' : COLORS.primary} style={{ marginRight: 4 }} />
+            <Text style={[styles.addBtnText, hasVariants && { color: '#2563eb' }]}>
+              {hasVariants ? 'Select' : (qty > 0 ? `Add (${qty})` : 'Add')}
+            </Text>
+          </TouchableOpacity>
         </View>
       </View>
     );
@@ -345,6 +388,64 @@ export default function WaiterPunchScreen({ route }) {
         </View>
       )}
 
+      {/* Variant Selection Modal */}
+      <Modal
+        visible={variantModalVisible}
+        animationType="fade"
+        transparent
+        onRequestClose={() => {
+          setVariantModalVisible(false);
+          setSelectedVariantItem(null);
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { padding: 20 }]}>
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalTitle}>{selectedVariantItem?.name}</Text>
+                <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>Select portion / variant</Text>
+              </View>
+              <TouchableOpacity onPress={() => {
+                setVariantModalVisible(false);
+                setSelectedVariantItem(null);
+              }}>
+                <Ionicons name="close" size={24} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={{ marginVertical: 14 }}>
+              {(selectedVariantItem?.menu_item_variants || selectedVariantItem?.variants || []).map((v, i) => (
+                <TouchableOpacity
+                  key={v.id || i}
+                  style={{
+                    backgroundColor: '#f8fafc',
+                    padding: 14,
+                    borderRadius: 12,
+                    borderWidth: 1,
+                    borderColor: '#e2e8f0',
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: 10
+                  }}
+                  activeOpacity={0.7}
+                  onPress={() => addToCart(selectedVariantItem, v)}
+                >
+                  <View>
+                    <Text style={{ fontSize: 15, fontWeight: '700', color: '#0f172a' }}>{v.name || v.variant_name || 'Portion Variant'}</Text>
+                    {v.description ? <Text style={{ fontSize: 11, color: '#64748b' }}>{v.description}</Text> : null}
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Text style={{ fontSize: 15, fontWeight: '800', color: '#059669', marginRight: 10 }}>₹{v.price}</Text>
+                    <Ionicons name="add-circle" size={24} color="#2563eb" />
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Cart Modal */}
       <Modal
         visible={showCart}
@@ -383,18 +484,20 @@ export default function WaiterPunchScreen({ route }) {
             {/* Cart Items List */}
             <ScrollView style={{ maxHeight: 250, marginVertical: 12 }}>
               {cart.map(item => (
-                <View key={item.id} style={styles.cartItemRow}>
+                <View key={item.cartKey || item.id} style={styles.cartItemRow}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.cartItemTitle}>{item.name}</Text>
+                    <Text style={styles.cartItemTitle}>
+                      {item.name} {item.variantName ? `(${item.variantName})` : ''}
+                    </Text>
                     <Text style={styles.cartItemSubtotal}>{formatCurrency(item.price * item.quantity)}</Text>
                   </View>
 
                   <View style={styles.qtyStepper}>
-                    <TouchableOpacity style={styles.stepperBtn} onPress={() => removeFromCart(item.id)}>
+                    <TouchableOpacity style={styles.stepperBtn} onPress={() => removeFromCart(item.cartKey || item.id)}>
                       <Ionicons name="remove" size={16} color="#0f172a" />
                     </TouchableOpacity>
                     <Text style={styles.stepperQty}>{item.quantity}</Text>
-                    <TouchableOpacity style={styles.stepperBtn} onPress={() => addToCart(item)}>
+                    <TouchableOpacity style={styles.stepperBtn} onPress={() => addToCart(item, item.variantId ? { id: item.variantId, name: item.variantName, price: item.price } : null)}>
                       <Ionicons name="add" size={16} color="#0f172a" />
                     </TouchableOpacity>
                   </View>
@@ -458,7 +561,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc' },
   header: {
     flexDirection: 'row',
-    justify: 'space-between',
+    justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingTop: 12,
@@ -538,11 +641,15 @@ const styles = StyleSheet.create({
   tablePill: {
     paddingHorizontal: 16,
     paddingVertical: 8,
-    borderRadius: 10,
-    backgroundColor: '#f1f5f9',
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.90)',
     marginRight: 8,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: 'rgba(226, 232, 240, 0.9)',
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 2,
   },
   tablePillSelected: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
   tablePillText: { fontSize: 13, fontWeight: '700', color: '#0f172a' },
@@ -578,15 +685,16 @@ const styles = StyleSheet.create({
   menuCard: {
     flex: 1,
     margin: 4,
-    backgroundColor: '#ffffff',
-    borderRadius: 14,
-    padding: 12,
-    elevation: 2,
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    borderRadius: 16,
+    padding: 13,
+    elevation: 4,
     shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
     borderWidth: 1,
-    borderColor: '#f1f5f9',
+    borderColor: 'rgba(226, 232, 240, 0.95)',
   },
   menuCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   vegIndicator: { width: 14, height: 14, borderRadius: 2, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },

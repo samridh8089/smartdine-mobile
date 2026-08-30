@@ -9,8 +9,10 @@ import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
 import { startAlarm, stopAlarm, stopAllAlarms } from '../lib/alarmManager';
-import { sendLocalNotification } from '../lib/notifications';
+import { sendLocalNotification, unregisterPushToken } from '../lib/notifications';
 import { COLORS, FONTS, RADIUS, SHADOWS, timeAgo } from '../lib/theme';
+
+import { getAssignedTableIdsForWaiter, fetchTableAssignments } from '../lib/tableAssignments';
 
 const PENDING_CALLS_STORAGE_KEY = '@smartdine_waiter_pending_calls';
 
@@ -20,6 +22,9 @@ export default function WaiterCallsScreen({ route }) {
   const [restaurantId, setRestaurantId] = useState(
     profile?.restaurant_id || profile?.restaurants?.id || null
   );
+
+  const [assignedTableIds, setAssignedTableIds] = useState([]);
+  const [assignedTableNames, setAssignedTableNames] = useState([]);
 
   useEffect(() => {
     async function fetchMissingRestaurantId() {
@@ -52,32 +57,24 @@ export default function WaiterCallsScreen({ route }) {
 
   const knownCallIds = useRef(new Set());
 
-  // Load offline queue on init
-  useEffect(() => {
-    async function loadPendingQueue() {
-      try {
-        const stored = await AsyncStorage.getItem(PENDING_CALLS_STORAGE_KEY);
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setPendingQueue(parsed);
-          }
-        }
-      } catch (e) {
-        console.log('[WaiterCalls] Load pending queue error:', e?.message);
-      }
-    }
-    loadPendingQueue();
-  }, []);
-
-  const savePendingQueue = async (queue) => {
-    setPendingQueue(queue);
+  // Load table assignments for this waiter
+  const loadAssignedTables = useCallback(async () => {
+    if (!restaurantId || !profile?.id) return;
     try {
-      await AsyncStorage.setItem(PENDING_CALLS_STORAGE_KEY, JSON.stringify(queue));
+      const assignments = await fetchTableAssignments(restaurantId);
+      const myAssigns = (assignments || []).filter(a => a.waiter_id === profile.id && a.active !== false);
+      const ids = myAssigns.map(a => a.table_id);
+      const names = myAssigns.map(a => a.table_name || 'Table');
+      setAssignedTableIds(ids);
+      setAssignedTableNames(names);
     } catch (e) {
-      console.log('[WaiterCalls] Save pending queue error:', e?.message);
+      console.log('[WaiterCalls] loadAssignedTables error:', e?.message);
     }
-  };
+  }, [restaurantId, profile?.id]);
+
+  useEffect(() => {
+    loadAssignedTables();
+  }, [loadAssignedTables]);
 
   const loadCalls = useCallback(async () => {
     if (!restaurantId) { setLoading(false); setRefreshing(false); return; }
@@ -95,10 +92,16 @@ export default function WaiterCallsScreen({ route }) {
       }
 
       setIsOffline(false);
-      const allCalls = data || [];
+      let allCalls = data || [];
+
+      // Filter by table assignments if assigned
+      if (profile?.role === 'waiter' && assignedTableIds.length > 0) {
+        allCalls = allCalls.filter(c => !c.table_id || assignedTableIds.includes(c.table_id));
+      }
+
       setCalls(allCalls);
 
-      // Trigger alarm for pending calls
+      // Trigger alarm for pending calls scoped to this waiter
       const pendingCalls = allCalls.filter(c => c.status === 'pending');
       let hasNew = false;
       pendingCalls.forEach(c => {
@@ -123,7 +126,7 @@ export default function WaiterCallsScreen({ route }) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [restaurantId]);
+  }, [restaurantId, assignedTableIds, profile?.role]);
 
   // Flush pending queue when online
   const flushPendingQueue = useCallback(async () => {
@@ -334,12 +337,24 @@ export default function WaiterCallsScreen({ route }) {
           style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#fee2e2', alignItems: 'center', justifyContent: 'center' }}
           onPress={async () => {
             stopAllAlarms();
+            if (profile?.id) await unregisterPushToken(profile.id);
             await supabase.auth.signOut().catch(() => {});
             navigation.replace('Login');
           }}
         >
           <Ionicons name="log-out-outline" size={18} color="#ef4444" />
         </TouchableOpacity>
+      </View>
+
+      {/* My Assigned Tables Banner */}
+      <View style={styles.assignedTablesBar}>
+        <View style={styles.assignedTablesLeft}>
+          <Ionicons name="restaurant-outline" size={16} color="#047857" style={{ marginRight: 6 }} />
+          <Text style={styles.assignedTablesLabel}>My Assigned Tables:</Text>
+        </View>
+        <Text style={styles.assignedTablesList} numberOfLines={1}>
+          {assignedTableNames.length > 0 ? assignedTableNames.join(', ') : 'All Tables (Unrestricted)'}
+        </Text>
       </View>
 
       {/* Offline Connectivity Banner */}
@@ -436,7 +451,35 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 24, fontWeight: '700', color: '#0f172a' },
   subtitle: { fontSize: 12, color: '#64748b', marginTop: 2 },
-  alertBadge: { backgroundColor: '#ef4444', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999 },
+  assignedTablesBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#ecfdf5',
+    borderBottomWidth: 1,
+    borderBottomColor: '#a7f3d0',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  assignedTablesLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  assignedTablesLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#047857',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  assignedTablesList: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#065f46',
+    flexShrink: 1,
+    marginLeft: 8,
+  },
+  alertBadge: { backgroundColor: '#ea580c', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999 },
   alertBadgeText: { color: '#ffffff', fontWeight: '700', fontSize: 12 },
   offlineBanner: {
     backgroundColor: '#3b82f6',

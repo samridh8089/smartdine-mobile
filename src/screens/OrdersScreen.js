@@ -392,6 +392,19 @@ export default function OrdersScreen({ route }) {
             .eq('order_id', orderId)
             .neq('status', 'cancelled');
         }
+
+        if (['served', 'completed'].includes(newStatus)) {
+          // Direct fallback consumption safeguard
+          try {
+            await supabase
+              .from('inventory_reservations')
+              .update({ status: 'CONSUMED', updated_at: now })
+              .eq('order_id', orderId)
+              .eq('status', 'ACTIVE');
+          } catch (resErr) {
+            console.log('[OrdersScreen] Reservation update notice:', resErr?.message);
+          }
+        }
       }
 
       await loadOrders();
@@ -1226,27 +1239,28 @@ const styles = StyleSheet.create({
   chipContainer: { height: 44, marginBottom: 8 },
   chipScroll: { paddingHorizontal: 16, alignItems: 'center' },
   chip: {
-    paddingHorizontal: 14,
-    paddingVertical: 7,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
     borderRadius: 999,
     backgroundColor: '#ffffff',
     marginRight: 8,
     borderWidth: 1,
     borderColor: '#e2e8f0',
+    elevation: 1,
   },
   chipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
   chipText: { fontSize: 12, fontWeight: '600', color: '#64748b' },
   chipTextActive: { color: '#ffffff', fontWeight: '700' },
-  listContent: { padding: 16 },
+  listContent: { padding: 16, paddingBottom: 100 },
   orderCard: {
     backgroundColor: '#ffffff',
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 12,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 14,
     elevation: 2,
     shadowColor: '#000',
     shadowOpacity: 0.05,
-    shadowRadius: 6,
+    shadowRadius: 8,
     borderWidth: 1,
     borderColor: '#f1f5f9',
   },

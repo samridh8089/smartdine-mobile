@@ -26,26 +26,6 @@ async function configureAudio() {
 async function getSoundSource() {
   try {
     const requireAsset = require('../../../assets/order_tune.mp3');
-    const asset = Asset.fromModule(requireAsset);
-    
-    if (!asset.downloaded) {
-      try {
-        await asset.downloadAsync();
-      } catch (downloadErr) {
-        console.log('[AlarmManagerDiagnostics] Asset downloadAsync fallback caught:', downloadErr?.message);
-      }
-    }
-
-    if (asset.localUri) {
-      console.log('[AlarmManagerDiagnostics] Using localUri asset source:', asset.localUri);
-      return { uri: asset.localUri };
-    }
-
-    if (asset.uri) {
-      console.log('[AlarmManagerDiagnostics] Using asset.uri source:', asset.uri);
-      return { uri: asset.uri };
-    }
-
     return requireAsset;
   } catch (e) {
     console.log('[AlarmManagerDiagnostics] getSoundSource error:', e?.message);
