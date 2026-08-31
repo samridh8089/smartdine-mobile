@@ -25,6 +25,7 @@
     },
     "android": {
       "package": "com.smartdine.mobile",
+      "googleServicesFile": "./google-services.json",
       "versionCode": 12,
       "permissions": [
         "RECEIVE_BOOT_COMPLETED",
