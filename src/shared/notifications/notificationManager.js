@@ -41,10 +41,13 @@ export async function setupNotificationChannel() {
 
     for (const ch of channels) {
       try {
-        await Notifications.setNotificationChannelAsync(ch.id, {
-          ...channelConfig,
-          name: ch.name,
-        });
+        const existing = await Notifications.getNotificationChannelAsync(ch.id);
+        if (!existing) {
+          await Notifications.setNotificationChannelAsync(ch.id, {
+            ...channelConfig,
+            name: ch.name,
+          });
+        }
       } catch (e) {
         console.log(`[NotificationManager] Channel creation warning for ${ch.id}:`, e?.message);
       }
