@@ -413,6 +413,23 @@ export default function KitchenScreen({ route }) {
             cancelled_at: new Date().toISOString(),
             cancelled_by: profile?.full_name || 'Kitchen',
           }).eq('id', orderId);
+
+          // P1-07: Table status lifecycle sync — release table upon cancellation
+          const cancelTableId = parentOrd?.table_id || target.orders?.table_id;
+          if (cancelTableId) {
+            try {
+              fetch(`${CONFIG.API_BASE_URL}/api/staff/update-order-status`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  orderId,
+                  newStatus: 'cancelled',
+                  staffName: profile?.full_name || 'Kitchen',
+                  cancellationReason: finalReason
+                })
+              }).catch(() => {});
+            } catch (_) {}
+          }
         } else {
           // Other batches are active, OR the order is already served/completed.
           // FIX — ORDER STATUS REGRESSION:

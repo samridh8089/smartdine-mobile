@@ -319,6 +319,21 @@ export default function OrdersScreen({ route }) {
         .eq('order_id', paymentTargetOrder.id)
         .neq('status', 'cancelled');
 
+      // P1-07: Table status lifecycle sync — release table upon settlement
+      if (paymentTargetOrder.table_id) {
+        try {
+          fetch(`${CONFIG.API_BASE_URL}/api/staff/update-order-status`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              orderId: paymentTargetOrder.id,
+              newStatus: 'completed',
+              staffName: collectorStr
+            })
+          }).catch(() => {});
+        } catch (_) {}
+      }
+
       setShowPaymentModal(false);
       const targetId = paymentTargetOrder.id;
       setPaymentTargetOrder(null);

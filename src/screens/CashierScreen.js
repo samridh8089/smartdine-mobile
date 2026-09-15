@@ -8,6 +8,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
+import { CONFIG } from '../shared/config';
 import { COLORS, FONTS, RADIUS, SHADOWS, formatCurrency, timeAgo, getStatusColor, getStatusLabel } from '../lib/theme';
 
 export default function CashierScreen({ route }) {
@@ -120,6 +121,22 @@ export default function CashierScreen({ route }) {
         .update({ status: 'completed' })
         .eq('order_id', orderId);
 
+      // P1-07: Table status lifecycle sync — release table upon completion
+      const ord = orders.find(o => o.id === orderId);
+      if (ord?.table_id) {
+        try {
+          fetch(`${CONFIG.API_BASE_URL}/api/staff/update-order-status`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              orderId,
+              newStatus: 'completed',
+              staffName: 'Cashier'
+            })
+          }).catch(() => {});
+        } catch (_) {}
+      }
+
       await loadOrders();
     } catch (e) {
       Alert.alert('Error', e.message || 'Could not complete order');
@@ -148,6 +165,22 @@ export default function CashierScreen({ route }) {
         .update({ status: 'completed' })
         .eq('order_id', orderId)
         .neq('status', 'cancelled');
+
+      // P1-07: Table status lifecycle sync — release table upon settlement
+      const ord = orders.find(o => o.id === orderId);
+      if (ord?.table_id) {
+        try {
+          fetch(`${CONFIG.API_BASE_URL}/api/staff/update-order-status`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              orderId,
+              newStatus: 'completed',
+              staffName: 'Cashier'
+            })
+          }).catch(() => {});
+        } catch (_) {}
+      }
 
       Alert.alert('Payment Settled 🎉', `Order #${orderId.slice(0, 6)} settled successfully via ${mode.toUpperCase()}. Receipt ready.`);
       setSelectedOrderForBill(null);
