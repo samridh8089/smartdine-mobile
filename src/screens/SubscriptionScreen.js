@@ -138,6 +138,11 @@ export default function SubscriptionScreen({ route, navigation }) {
   const expiryDate = restaurantData?.trial_ends_at ? new Date(restaurantData.trial_ends_at).toLocaleDateString() : 'N/A';
 
   const handleBuyPlan = async (plan) => {
+    const isOwner = profile.role === 'owner' || profile.role === 'super_admin';
+    if (!isOwner) {
+      Alert.alert('Permission Denied', 'Only the Restaurant Owner can purchase or modify subscription plans.');
+      return;
+    }
     setPurchasingPlanId(plan.id);
     try {
       const price = billingInterval === 'yearly' ? (plan.price_yearly || plan.price_monthly * 10) : plan.price_monthly;

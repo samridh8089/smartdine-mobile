@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput,
   ActivityIndicator, ScrollView, Modal, Platform,
@@ -32,6 +32,8 @@ export default function WaiterPunchScreen({ route }) {
 
   const [selectedVariantItem, setSelectedVariantItem] = useState(null);
   const [variantModalVisible, setVariantModalVisible] = useState(false);
+
+  const isSubmittingRef = useRef(false);
 
   const loadData = useCallback(async () => {
     if (!restaurantId) { setLoading(false); return; }
@@ -122,8 +124,17 @@ export default function WaiterPunchScreen({ route }) {
   });
 
   async function submitOrder() {
+    if (isSubmittingRef.current || submitting) return;
     if (cart.length === 0) { Alert.alert('Empty Cart', 'Please add at least one item'); return; }
-    if (orderType === 'dine_in' && !selectedTable) { Alert.alert('Select Table', 'Please select a table'); return; }
+    if (orderType === 'dine_in' && (!selectedTable || !selectedTable.id)) {
+      Alert.alert('Select Table', 'Please select a table');
+      return;
+    }
+    if (orderType === 'dine_in' && selectedTable.restaurant_id && selectedTable.restaurant_id !== restaurantId) {
+      Alert.alert('Invalid Table', 'Selected table does not belong to this restaurant.');
+      return;
+    }
+    isSubmittingRef.current = true;
     setSubmitting(true);
 
     const tableNameStr = orderType === 'dine_in'
@@ -178,6 +189,7 @@ export default function WaiterPunchScreen({ route }) {
       console.log('[FORENSIC_INVENTORY_TRACE] MOBILE_WAITER_PUNCH_ERROR:', e?.message);
       Alert.alert('Order Placement Failed', e?.message || 'Could not save order.');
     } finally {
+      isSubmittingRef.current = false;
       setSubmitting(false);
     }
   }

@@ -651,9 +651,25 @@ export default function KitchenScreen({ route }) {
           )}
 
           {batch.status === 'ready' && (
-            <View style={styles.waitingNotice}>
-              <Ionicons name="checkmark-circle" size={18} color="#22c55e" style={{ marginRight: 6 }} />
-              <Text style={styles.waitingText}>Ready for Waiter Pickup</Text>
+            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <View style={[styles.waitingNotice, { flex: 1 }]}>
+                <Ionicons name="checkmark-circle" size={16} color="#22c55e" style={{ marginRight: 4 }} />
+                <Text style={styles.waitingText} numberOfLines={1}>Ready for Pickup</Text>
+              </View>
+              <TouchableOpacity
+                style={[styles.btn, { backgroundColor: '#059669', paddingHorizontal: 12, minWidth: 110 }]}
+                disabled={isBusy}
+                onPress={() => updateBatchStatus(batch, 'served')}
+              >
+                {isBusy ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <>
+                    <Ionicons name="hand-right-outline" size={16} color="#fff" style={{ marginRight: 4 }} />
+                    <Text style={styles.btnText}>Hand Over</Text>
+                  </>
+                )}
+              </TouchableOpacity>
             </View>
           )}
         </View>

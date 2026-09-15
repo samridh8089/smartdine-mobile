@@ -25,6 +25,23 @@ export default function AccountScreen({ route }) {
   const [tapCount, setTapCount] = useState(0);
   const [debugVisible, setDebugVisible] = useState(false);
 
+  // Audit Logs State
+  const [auditModalVisible, setAuditModalVisible] = useState(false);
+  const [auditLogs, setAuditLogs] = useState([]);
+  const [loadingAudit, setLoadingAudit] = useState(false);
+
+  // Bookings State
+  const [bookingsModalVisible, setBookingsModalVisible] = useState(false);
+  const [bookings, setBookings] = useState([]);
+  const [loadingBookings, setLoadingBookings] = useState(false);
+
+  // Restaurant Settings State
+  const [settingsModalVisible, setSettingsModalVisible] = useState(false);
+  const [editRestName, setEditRestName] = useState('');
+  const [editRestPhone, setEditRestPhone] = useState('');
+  const [editRestGstin, setEditRestGstin] = useState('');
+  const [savingSettings, setSavingSettings] = useState(false);
+
   useEffect(() => {
     async function loadRest() {
       if (!restaurantId) return;
@@ -123,7 +140,98 @@ export default function AccountScreen({ route }) {
     }
   };
 
-  const isManagement = profile.role === 'owner' || profile.role === 'manager';
+  const handleSaveSettings = async () => {
+    if (!editRestName.trim()) {
+      Alert.alert('Validation', 'Please enter restaurant name.');
+      return;
+    }
+    setSavingSettings(true);
+    try {
+      const { data: rest } = await supabase.from('restaurants').select('settings').eq('id', restaurantId).maybeSingle();
+      const settings = {
+        ...(rest?.settings || {}),
+        phone: editRestPhone.trim(),
+        gstin: editRestGstin.trim(),
+      };
+      await supabase.from('restaurants').update({ name: editRestName.trim(), settings }).eq('id', restaurantId);
+      setRestaurantData(prev => ({ ...prev, name: editRestName.trim(), settings }));
+      Alert.alert('Settings Saved', 'Restaurant profile and settings updated successfully.');
+      setSettingsModalVisible(false);
+    } catch (e) {
+      Alert.alert('Save Failed', e?.message || 'Could not save settings');
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  const loadAuditLogs = async () => {
+    if (!restaurantId) return;
+    setLoadingAudit(true);
+    try {
+      const { data, error } = await supabase
+        .from('audit_logs')
+        .select('*')
+        .eq('restaurant_id', restaurantId)
+        .order('created_at', { ascending: false })
+        .limit(30);
+
+      if (error || !data || data.length === 0) {
+        const { data: ords } = await supabase
+          .from('orders')
+          .select('id, created_at, status, total, table_name, payment_status')
+          .eq('restaurant_id', restaurantId)
+          .order('created_at', { ascending: false })
+          .limit(15);
+        const fallbackLogs = (ords || []).map(o => ({
+          id: o.id,
+          action: 'order_sync',
+          created_at: o.created_at,
+          user_name: 'System',
+          details: { message: `Order #${o.id.slice(0, 6)} (${o.table_name || 'Table'}) - ${o.status.toUpperCase()} - Total ₹${o.total || 0}` }
+        }));
+        setAuditLogs(fallbackLogs);
+      } else {
+        setAuditLogs(data);
+      }
+    } catch (e) {
+      console.log('Audit load error:', e?.message);
+    } finally {
+      setLoadingAudit(false);
+    }
+  };
+
+  const loadBookings = async () => {
+    if (!restaurantId) return;
+    setLoadingBookings(true);
+    try {
+      const { data: rest } = await supabase
+        .from('restaurants')
+        .select('settings')
+        .eq('id', restaurantId)
+        .maybeSingle();
+      const tableStates = rest?.settings?.table_states || {};
+      const bookingList = [];
+      Object.entries(tableStates).forEach(([tblId, st]) => {
+        if (st.occupancy_status === 'reserved' || st.reservation_time) {
+          bookingList.push({
+            tableId: tblId,
+            guestName: st.reservation_party_name || 'Reserved Guest',
+            time: st.reservation_time || 'Today',
+            guests: st.guest_count || 4,
+            status: 'confirmed',
+          });
+        }
+      });
+      setBookings(bookingList);
+    } catch (e) {
+      console.log('Bookings load error:', e?.message);
+    } finally {
+      setLoadingBookings(false);
+    }
+  };
+
+  const isOwner = profile.role === 'owner' || profile.role === 'super_admin';
+  const isManagement = isOwner || profile.role === 'manager';
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
@@ -154,8 +262,8 @@ export default function AccountScreen({ route }) {
           </View>
         </View>
 
-        {/* Subscription & Billing Section (for Owner / Manager) */}
-        {isManagement && (
+        {/* Subscription & Billing Section (Owner Only) */}
+        {isOwner && (
           <View style={styles.sectionCard}>
             <Text style={styles.sectionTitle}>SUBSCRIPTION & BILLING</Text>
             <TouchableOpacity
@@ -222,6 +330,23 @@ export default function AccountScreen({ route }) {
 
             <TouchableOpacity
               style={styles.menuItem}
+              onPress={() => {
+                loadBookings();
+                setBookingsModalVisible(true);
+              }}
+            >
+              <View style={[styles.menuIconBg, { backgroundColor: '#fdf2f8' }]}>
+                <Ionicons name="calendar-outline" size={20} color="#db2777" />
+              </View>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.menuItemText}>Table Bookings</Text>
+                <Text style={styles.menuItemSub}>View guest table reservations</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.menuItem}
               onPress={() => navigation.navigate('Inventory', { profile })}
             >
               <View style={[styles.menuIconBg, { backgroundColor: '#fffbeb' }]}>
@@ -233,6 +358,25 @@ export default function AccountScreen({ route }) {
               </View>
               <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
             </TouchableOpacity>
+
+            {isOwner && (
+              <TouchableOpacity
+                style={styles.menuItem}
+                onPress={() => {
+                  loadAuditLogs();
+                  setAuditModalVisible(true);
+                }}
+              >
+                <View style={[styles.menuIconBg, { backgroundColor: '#f1f5f9' }]}>
+                  <Ionicons name="newspaper-outline" size={20} color="#475569" />
+                </View>
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={styles.menuItemText}>Audit Logs</Text>
+                  <Text style={styles.menuItemSub}>System operations & telemetry trail</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
+              </TouchableOpacity>
+            )}
           </View>
         )}
 
@@ -252,6 +396,27 @@ export default function AccountScreen({ route }) {
             </View>
             <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
           </TouchableOpacity>
+
+          {isOwner && (
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => {
+                setEditRestName(restaurantData?.name || restaurantName || '');
+                setEditRestPhone(restaurantData?.settings?.phone || '');
+                setEditRestGstin(restaurantData?.settings?.gstin || '');
+                setSettingsModalVisible(true);
+              }}
+            >
+              <View style={[styles.menuIconBg, { backgroundColor: '#fef3c7' }]}>
+                <Ionicons name="settings-outline" size={20} color="#d97706" />
+              </View>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.menuItemText}>Restaurant Settings</Text>
+                <Text style={styles.menuItemSub}>Name, contact, GSTIN & defaults</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Support & Help Section */}
@@ -429,6 +594,139 @@ export default function AccountScreen({ route }) {
               >
                 {updatingPass ? (
                   <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <Text style={styles.saveBtnText}>Save</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Audit Logs Modal */}
+      <Modal
+        visible={auditModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setAuditModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { maxHeight: '80%', maxWidth: 420 }]}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <Text style={styles.modalTitle}>Audit Logs</Text>
+              <TouchableOpacity onPress={() => setAuditModalVisible(false)} style={{ padding: 6 }}>
+                <Ionicons name="close" size={20} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+            {loadingAudit ? (
+              <ActivityIndicator color={COLORS.primary} size="large" style={{ marginVertical: 24 }} />
+            ) : auditLogs.length === 0 ? (
+              <Text style={{ textAlign: 'center', color: '#94a3b8', marginVertical: 24 }}>No audit logs found</Text>
+            ) : (
+              <ScrollView style={{ maxHeight: 360 }} showsVerticalScrollIndicator={false}>
+                {auditLogs.map((log, idx) => (
+                  <View key={log.id || idx} style={{ paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#0f172a' }}>{log.action || 'Event'}</Text>
+                      <Text style={{ fontSize: 10, color: '#94a3b8' }}>{log.created_at ? new Date(log.created_at).toLocaleTimeString() : ''}</Text>
+                    </View>
+                    <Text style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{log.details?.message || log.details?.action || log.user_name || 'System event'}</Text>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Table Bookings Modal */}
+      <Modal
+        visible={bookingsModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setBookingsModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { maxHeight: '80%', maxWidth: 420 }]}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <Text style={styles.modalTitle}>Table Bookings</Text>
+              <TouchableOpacity onPress={() => setBookingsModalVisible(false)} style={{ padding: 6 }}>
+                <Ionicons name="close" size={20} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+            {loadingBookings ? (
+              <ActivityIndicator color={COLORS.primary} size="large" style={{ marginVertical: 24 }} />
+            ) : bookings.length === 0 ? (
+              <View style={{ alignItems: 'center', paddingVertical: 24 }}>
+                <Ionicons name="calendar-outline" size={36} color="#cbd5e1" style={{ marginBottom: 8 }} />
+                <Text style={{ color: '#94a3b8', fontSize: 13 }}>No active reservations today</Text>
+              </View>
+            ) : (
+              <ScrollView style={{ maxHeight: 360 }} showsVerticalScrollIndicator={false}>
+                {bookings.map((b, idx) => (
+                  <View key={idx} style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                      <Text style={{ fontSize: 14, fontWeight: '700', color: '#0f172a' }}>{b.guestName}</Text>
+                      <Text style={{ fontSize: 12, fontWeight: '600', color: COLORS.primary }}>{b.time}</Text>
+                    </View>
+                    <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>Table {b.tableId} • {b.guests} Guests</Text>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Restaurant Settings Modal */}
+      <Modal
+        visible={settingsModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSettingsModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Restaurant Settings</Text>
+            <Text style={styles.modalSub}>Update restaurant profile and billing defaults</Text>
+
+            <Text style={styles.fieldLabel}>RESTAURANT NAME</Text>
+            <TextInput
+              style={styles.input}
+              value={editRestName}
+              onChangeText={setEditRestName}
+              placeholder="Restaurant Name"
+            />
+
+            <Text style={styles.fieldLabel}>CONTACT PHONE</Text>
+            <TextInput
+              style={styles.input}
+              value={editRestPhone}
+              onChangeText={setEditRestPhone}
+              placeholder="+91 9876543210"
+              keyboardType="phone-pad"
+            />
+
+            <Text style={styles.fieldLabel}>GSTIN / TAX NUMBER</Text>
+            <TextInput
+              style={styles.input}
+              value={editRestGstin}
+              onChangeText={setEditRestGstin}
+              placeholder="e.g. 08AAAAA0000A1Z5"
+              autoCapitalize="characters"
+            />
+
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+              <TouchableOpacity onPress={() => setSettingsModalVisible(false)} style={styles.cancelBtn}>
+                <Text style={styles.cancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.saveBtn}
+                disabled={savingSettings}
+                onPress={handleSaveSettings}
+              >
+                {savingSettings ? (
+                  <ActivityIndicator size="small" color="#fff" />
                 ) : (
                   <Text style={styles.saveBtnText}>Save</Text>
                 )}

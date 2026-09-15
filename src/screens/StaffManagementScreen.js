@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   TextInput, ActivityIndicator, Alert, Modal, ScrollView,
-  RefreshControl, Switch,
+  RefreshControl, Switch, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -54,6 +54,7 @@ export default function StaffManagementScreen({ route, navigation }) {
   const [verifyingStaffId, setVerifyingStaffId] = useState('');
   const [otpCode, setOtpCode] = useState('');
   const [verifyingOtp, setVerifyingOtp] = useState(false);
+  const [resendingOtp, setResendingOtp] = useState(false);
 
   useEffect(() => {
     if (!restaurantId) return;
@@ -138,6 +139,14 @@ export default function StaffManagementScreen({ route, navigation }) {
   }
 
   async function handleToggleActive(st) {
+    if (st.role === 'owner' || st.role === 'super_admin') {
+      Alert.alert('Action Restricted', 'Owner accounts cannot be deactivated.');
+      return;
+    }
+    if (profile?.role === 'manager' && st.role === 'manager') {
+      Alert.alert('Action Restricted', 'Managers cannot modify other manager accounts.');
+      return;
+    }
     const newStatus = st.is_active === false ? true : false;
     try {
       // 1. Update profiles
@@ -161,6 +170,10 @@ export default function StaffManagementScreen({ route, navigation }) {
   }
 
   async function handleCreateStaff() {
+    if (profile?.role === 'manager' && role === 'manager') {
+      Alert.alert('Permission Denied', 'Managers cannot create other manager accounts.');
+      return;
+    }
     if (!name.trim()) {
       Alert.alert('Validation', 'Please enter staff full name.');
       return;
@@ -328,6 +341,14 @@ export default function StaffManagementScreen({ route, navigation }) {
   }
 
   async function handleDeleteStaff(st) {
+    if (st.role === 'owner' || st.role === 'super_admin') {
+      Alert.alert('Action Restricted', 'Owner accounts cannot be deleted.');
+      return;
+    }
+    if (profile?.role === 'manager' && st.role === 'manager') {
+      Alert.alert('Action Restricted', 'Managers cannot delete manager accounts.');
+      return;
+    }
     Alert.alert(
       'Permanent Account Deletion',
       `Are you sure you want to permanently delete ${st.full_name || 'this staff member'}? This will remove their credentials, table assignments, and system access.`,
@@ -730,7 +751,10 @@ export default function StaffManagementScreen({ route, navigation }) {
         animationType="fade"
         onRequestClose={() => setOtpModalVisible(false)}
       >
-        <View style={styles.modalOverlayCenter}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlayCenter}
+        >
           <View style={styles.centerModalCard}>
             <Text style={styles.modalTitle}>Verify Staff Email OTP</Text>
             <Text style={styles.modalSub}>Enter the 8-digit OTP code sent to {verifyingEmail}</Text>
@@ -744,6 +768,25 @@ export default function StaffManagementScreen({ route, navigation }) {
               value={otpCode}
               onChangeText={setOtpCode}
             />
+
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 14 }}>
+              <TouchableOpacity
+                onPress={async () => {
+                  setResendingOtp(true);
+                  try {
+                    await handleResendVerification({ email: verifyingEmail, id: verifyingStaffId });
+                  } finally {
+                    setResendingOtp(false);
+                  }
+                }}
+                disabled={resendingOtp}
+                style={{ paddingVertical: 6 }}
+              >
+                <Text style={{ fontSize: 12, fontWeight: '700', color: COLORS.primary }}>
+                  {resendingOtp ? 'Resending...' : 'Resend OTP Code'}
+                </Text>
+              </TouchableOpacity>
+            </View>
 
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
               <TouchableOpacity onPress={() => setOtpModalVisible(false)} style={styles.cancelBtn}>
@@ -762,7 +805,7 @@ export default function StaffManagementScreen({ route, navigation }) {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );

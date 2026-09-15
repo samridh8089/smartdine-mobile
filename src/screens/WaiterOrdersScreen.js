@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   ActivityIndicator, RefreshControl, Platform, Alert, Vibration, ScrollView,
+  Modal, TextInput, KeyboardAvoidingView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
@@ -58,6 +59,14 @@ export default function WaiterOrdersScreen({ route }) {
   const [isOffline, setIsOffline] = useState(false);
   const [pendingQueue, setPendingQueue] = useState([]);
 
+  // Table Management & Transfer Modals
+  const [selectedOrderForAction, setSelectedOrderForAction] = useState(null);
+  const [allTables, setAllTables] = useState([]);
+  const [transferModalVisible, setTransferModalVisible] = useState(false);
+  const [guestModalVisible, setGuestModalVisible] = useState(false);
+  const [newGuestCount, setNewGuestCount] = useState('2');
+  const [actionProcessing, setActionProcessing] = useState(false);
+
   const knownReadyIds = useRef(new Set());
 
   // Load table assignments and live status for this waiter
@@ -68,6 +77,7 @@ export default function WaiterOrdersScreen({ route }) {
         fetchTableAssignments(restaurantId),
         fetchLiveTableStatus(restaurantId)
       ]);
+      setAllTables(liveTbls || []);
       const myAssigns = (assignments || []).filter(a => a.waiter_id === profile.id && a.active !== false);
       const ids = myAssigns.map(a => a.table_id);
       const names = myAssigns.map(a => a.table_name || 'Table');
@@ -292,27 +302,36 @@ export default function WaiterOrdersScreen({ route }) {
         <View style={styles.cardFooter}>
           <Text style={styles.timeAgo}>{timeAgo(item.created_at)}</Text>
 
-          {isReady ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <TouchableOpacity
-              style={styles.serveBtn}
-              disabled={isBusy}
-              onPress={() => markServed(item.id)}
+              style={[styles.manageTableBtn]}
+              onPress={() => setSelectedOrderForAction(item)}
             >
-              {isBusy ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <>
-                  <Ionicons name="checkmark-done-outline" size={16} color="#fff" style={{ marginRight: 4 }} />
-                  <Text style={styles.serveBtnText}>Mark Served</Text>
-                </>
-              )}
+              <Ionicons name="ellipsis-horizontal" size={16} color="#64748b" />
             </TouchableOpacity>
-          ) : (
-            <View style={styles.servedBadge}>
-              <Ionicons name="checkmark-circle" size={16} color="#22c55e" style={{ marginRight: 4 }} />
-              <Text style={styles.servedBadgeText}>Served to Table</Text>
-            </View>
-          )}
+
+            {isReady ? (
+              <TouchableOpacity
+                style={styles.serveBtn}
+                disabled={isBusy}
+                onPress={() => markServed(item.id)}
+              >
+                {isBusy ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <>
+                    <Ionicons name="checkmark-done-outline" size={16} color="#fff" style={{ marginRight: 4 }} />
+                    <Text style={styles.serveBtnText}>Mark Served</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.servedBadge}>
+                <Ionicons name="checkmark-circle" size={16} color="#22c55e" style={{ marginRight: 4 }} />
+                <Text style={styles.servedBadgeText}>Served</Text>
+              </View>
+            )}
+          </View>
         </View>
       </View>
     );
@@ -447,6 +466,199 @@ export default function WaiterOrdersScreen({ route }) {
           }
         />
       )}
+      {/* Table Actions Modal */}
+      <Modal
+        visible={Boolean(selectedOrderForAction) && !transferModalVisible && !guestModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSelectedOrderForAction(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.actionModalCard}>
+            <View style={styles.actionModalHeader}>
+              <Text style={styles.actionModalTitle}>
+                {selectedOrderForAction?.table_name || 'Takeaway'} Actions
+              </Text>
+              <TouchableOpacity onPress={() => setSelectedOrderForAction(null)} style={styles.closeBtn}>
+                <Ionicons name="close" size={20} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              style={styles.actionItemRow}
+              onPress={() => setTransferModalVisible(true)}
+            >
+              <View style={[styles.actionIconBg, { backgroundColor: '#eff6ff' }]}>
+                <Ionicons name="swap-horizontal" size={20} color="#2563eb" />
+              </View>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.actionItemTitle}>Transfer Table</Text>
+                <Text style={styles.actionItemSub}>Move this order to another dining table</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.actionItemRow}
+              onPress={() => {
+                setNewGuestCount(String(selectedOrderForAction?.guest_count || '2'));
+                setGuestModalVisible(true);
+              }}
+            >
+              <View style={[styles.actionIconBg, { backgroundColor: '#f0fdf4' }]}>
+                <Ionicons name="people-outline" size={20} color="#16a34a" />
+              </View>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.actionItemTitle}>Update Guest Count</Text>
+                <Text style={styles.actionItemSub}>Current: {selectedOrderForAction?.guest_count || 'Not set'}</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.actionItemRow}
+              onPress={() => {
+                const targetTable = allTables.find(t => t.id === selectedOrderForAction?.table_id);
+                setSelectedOrderForAction(null);
+                navigation.navigate('Punch', { profile, initialTable: targetTable });
+              }}
+            >
+              <View style={[styles.actionIconBg, { backgroundColor: '#fdf4ff' }]}>
+                <Ionicons name="add-circle-outline" size={20} color="#c026d3" />
+              </View>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.actionItemTitle}>Modify / Add Items</Text>
+                <Text style={styles.actionItemSub}>Punch additional items for this table</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Transfer Table Modal */}
+      <Modal
+        visible={transferModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setTransferModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.actionModalCard, { maxHeight: '80%' }]}>
+            <View style={styles.actionModalHeader}>
+              <Text style={styles.actionModalTitle}>Select Target Table</Text>
+              <TouchableOpacity onPress={() => setTransferModalVisible(false)} style={styles.closeBtn}>
+                <Ionicons name="close" size={20} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.transferSub}>
+              Move order from {selectedOrderForAction?.table_name} to:
+            </Text>
+
+            <ScrollView style={{ maxHeight: 300 }} showsVerticalScrollIndicator={false}>
+              {allTables
+                .filter(t => t.id !== selectedOrderForAction?.table_id)
+                .map(tbl => (
+                  <TouchableOpacity
+                    key={tbl.id}
+                    style={styles.targetTableItem}
+                    disabled={actionProcessing}
+                    onPress={async () => {
+                      setActionProcessing(true);
+                      try {
+                        await supabase
+                          .from('orders')
+                          .update({ table_id: tbl.id, table_name: tbl.name, updated_at: new Date().toISOString() })
+                          .eq('id', selectedOrderForAction.id);
+                        Alert.alert('Transferred! 🎉', `Order transferred to ${tbl.name}`);
+                        setTransferModalVisible(false);
+                        setSelectedOrderForAction(null);
+                        await loadOrders();
+                        await loadAssignedTables();
+                      } catch (e) {
+                        Alert.alert('Transfer Error', e?.message || 'Could not transfer table');
+                      } finally {
+                        setActionProcessing(false);
+                      }
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Ionicons name="restaurant-outline" size={18} color="#0f172a" style={{ marginRight: 8 }} />
+                      <Text style={styles.targetTableName}>{tbl.name}</Text>
+                    </View>
+                    <Text style={styles.targetTableSelectText}>Select</Text>
+                  </TouchableOpacity>
+                ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Guest Count Modal */}
+      <Modal
+        visible={guestModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setGuestModalVisible(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlay}
+        >
+          <View style={styles.actionModalCard}>
+            <View style={styles.actionModalHeader}>
+              <Text style={styles.actionModalTitle}>Update Guest Count</Text>
+              <TouchableOpacity onPress={() => setGuestModalVisible(false)} style={styles.closeBtn}>
+                <Ionicons name="close" size={20} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+
+            <TextInput
+              style={styles.guestCountInput}
+              keyboardType="number-pad"
+              maxLength={2}
+              value={newGuestCount}
+              onChangeText={setNewGuestCount}
+              placeholder="e.g. 4"
+            />
+
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+              <TouchableOpacity onPress={() => setGuestModalVisible(false)} style={styles.cancelBtn}>
+                <Text style={styles.cancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.saveBtn}
+                disabled={actionProcessing}
+                onPress={async () => {
+                  const cnt = parseInt(newGuestCount, 10);
+                  if (isNaN(cnt) || cnt < 1) {
+                    Alert.alert('Validation', 'Please enter a valid guest count (1-50)');
+                    return;
+                  }
+                  setActionProcessing(true);
+                  try {
+                    await supabase.from('orders').update({ guest_count: cnt }).eq('id', selectedOrderForAction.id);
+                    Alert.alert('Updated', `Guest count set to ${cnt}`);
+                    setGuestModalVisible(false);
+                    setSelectedOrderForAction(null);
+                    await loadOrders();
+                  } catch (e) {
+                    Alert.alert('Error', e?.message || 'Could not update guest count');
+                  } finally {
+                    setActionProcessing(false);
+                  }
+                }}
+              >
+                {actionProcessing ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.saveBtnText}>Save</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -603,4 +815,123 @@ const styles = StyleSheet.create({
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   emptyContainer: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60 },
   emptyText: { fontSize: 14, color: '#94a3b8', fontWeight: '600' },
+  manageTableBtn: {
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  actionModalCard: {
+    backgroundColor: '#ffffff',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    maxHeight: '85%',
+  },
+  actionModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  actionModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  closeBtn: {
+    padding: 6,
+    borderRadius: 8,
+    backgroundColor: '#f1f5f9',
+  },
+  actionItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  actionIconBg: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionItemTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  actionItemSub: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  transferSub: {
+    fontSize: 13,
+    color: '#64748b',
+    marginBottom: 12,
+  },
+  targetTableItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#f8fafc',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    marginBottom: 8,
+  },
+  targetTableName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  targetTableSelectText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.primary,
+  },
+  guestCountInput: {
+    backgroundColor: '#f8fafc',
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#0f172a',
+    textAlign: 'center',
+  },
+  cancelBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  cancelBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  saveBtn: {
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  saveBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
 });
+
