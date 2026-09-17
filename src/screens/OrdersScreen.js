@@ -10,6 +10,7 @@ import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
+import { fetchWithAuth } from '../lib/apiClient';
 import { startAlarm, stopAlarm, stopAllAlarms } from '../lib/alarmManager';
 import { sendLocalNotification } from '../lib/notifications';
 import {
@@ -17,6 +18,7 @@ import {
   formatCurrency, getStatusColor, getStatusLabel, timeAgo,
 } from '../lib/theme';
 import { fetchTableAssignments } from '../lib/tableAssignments';
+import { getTodayDateString, getDayRangeInTimezone } from '../lib/timestamp';
 
 const ORDER_STATUSES = ['all', 'new', 'accepted', 'preparing', 'ready', 'served', 'completed', 'paid', 'cancelled'];
 const PENDING_OWNER_ORDERS_KEY = '@smartdine_owner_pending_orders';
@@ -77,6 +79,11 @@ export default function OrdersScreen({ route }) {
   const [calls, setCalls] = useState([]);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [statusFilter, setStatusFilter] = useState('all');
+  const [selectedDate, setSelectedDate] = useState(() => getTodayDateString('Asia/Kolkata'));
+  const selectedDateRef = useRef(selectedDate);
+  useEffect(() => {
+    selectedDateRef.current = selectedDate;
+  }, [selectedDate]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -122,15 +129,23 @@ export default function OrdersScreen({ route }) {
     }
   };
 
-  const loadOrders = useCallback(async () => {
+  const loadOrders = useCallback(async (overrideDate) => {
     if (!restaurantId) { setLoading(false); setRefreshing(false); return; }
     try {
-      const { data, error } = await supabase
+      const targetDate = overrideDate !== undefined ? overrideDate : selectedDateRef.current;
+      let query = supabase
         .from('orders')
         .select('*, order_items(*), order_batches(*)')
-        .eq('restaurant_id', restaurantId)
+        .eq('restaurant_id', restaurantId);
+
+      if (targetDate) {
+        const { startIso, endIso } = getDayRangeInTimezone(targetDate, 'Asia/Kolkata');
+        query = query.gte('created_at', startIso).lte('created_at', endIso);
+      }
+
+      const { data, error } = await query
         .order('created_at', { ascending: false })
-        .limit(150);
+        .limit(200);
 
       if (error) {
         console.log('Orders load DB error:', error.message);
@@ -322,9 +337,8 @@ export default function OrdersScreen({ route }) {
       // P1-07: Table status lifecycle sync — release table upon settlement
       if (paymentTargetOrder.table_id) {
         try {
-          fetch(`${CONFIG.API_BASE_URL}/api/staff/update-order-status`, {
+          fetchWithAuth('/api/staff/update-order-status', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               orderId: paymentTargetOrder.id,
               newStatus: 'completed',
@@ -365,9 +379,8 @@ export default function OrdersScreen({ route }) {
       // 1. Call authoritative backend API first to run inventoryEngine transitions
       let apiSuccess = false;
       try {
-        const apiRes = await fetch(`${CONFIG.API_BASE_URL}/api/staff/update-order-status`, {
+        const apiRes = await fetchWithAuth('/api/staff/update-order-status', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             orderId,
             newStatus,
@@ -821,6 +834,60 @@ export default function OrdersScreen({ route }) {
                 <Ionicons name="close-circle" size={18} color="#94a3b8" />
               </TouchableOpacity>
             )}
+          </View>
+
+          {/* Date Selector Row */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 8, gap: 8 }}>
+            <TouchableOpacity
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 6,
+                paddingHorizontal: 12,
+                paddingVertical: 6,
+                borderRadius: 8,
+                backgroundColor: selectedDate === getTodayDateString('Asia/Kolkata') ? COLORS.primary + '15' : '#f1f5f9',
+                borderWidth: 1,
+                borderColor: selectedDate === getTodayDateString('Asia/Kolkata') ? COLORS.primary : '#e2e8f0'
+              }}
+              onPress={() => {
+                const today = getTodayDateString('Asia/Kolkata');
+                setSelectedDate(today);
+                loadOrders(today);
+              }}
+            >
+              <Ionicons name="calendar-outline" size={14} color={selectedDate === getTodayDateString('Asia/Kolkata') ? COLORS.primary : '#64748b'} />
+              <Text style={{ fontSize: 12, fontWeight: '700', color: selectedDate === getTodayDateString('Asia/Kolkata') ? COLORS.primary : '#334155' }}>
+                Today
+              </Text>
+            </TouchableOpacity>
+
+            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 }}>
+              <Ionicons name="time-outline" size={14} color="#64748b" style={{ marginRight: 6 }} />
+              <TextInput
+                style={{ flex: 1, fontSize: 12, color: '#0f172a', padding: 0 }}
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor="#94a3b8"
+                value={selectedDate}
+                onChangeText={(val) => {
+                  setSelectedDate(val);
+                  if (/^\d{4}-\d{2}-\d{2}$/.test(val)) {
+                    loadOrders(val);
+                  }
+                }}
+              />
+            </View>
+
+            <TouchableOpacity
+              style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#e2e8f0' }}
+              onPress={() => {
+                const today = getTodayDateString('Asia/Kolkata');
+                setSelectedDate(today);
+                loadOrders(today);
+              }}
+            >
+              <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b' }}>Clear</Text>
+            </TouchableOpacity>
           </View>
 
           {/* Horizontal Status Chips */}

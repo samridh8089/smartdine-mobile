@@ -3,7 +3,7 @@
     "name": "CleverOps",
     "owner": "ad-city",
     "slug": "smartdine-mobile-app",
-    "version": "2.0.0",
+    "version": "2.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -26,7 +26,7 @@
     "android": {
       "package": "com.smartdine.mobile",
       "googleServicesFile": "./google-services.json",
-      "versionCode": 12,
+      "versionCode": 13,
       "permissions": [
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE",

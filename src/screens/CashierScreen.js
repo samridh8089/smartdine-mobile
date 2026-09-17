@@ -8,6 +8,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
+import { fetchWithAuth } from '../lib/apiClient';
 import { CONFIG } from '../shared/config';
 import { COLORS, FONTS, RADIUS, SHADOWS, formatCurrency, timeAgo, getStatusColor, getStatusLabel } from '../lib/theme';
 
@@ -125,9 +126,8 @@ export default function CashierScreen({ route }) {
       const ord = orders.find(o => o.id === orderId);
       if (ord?.table_id) {
         try {
-          fetch(`${CONFIG.API_BASE_URL}/api/staff/update-order-status`, {
+          fetchWithAuth('/api/staff/update-order-status', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               orderId,
               newStatus: 'completed',
@@ -170,9 +170,8 @@ export default function CashierScreen({ route }) {
       const ord = orders.find(o => o.id === orderId);
       if (ord?.table_id) {
         try {
-          fetch(`${CONFIG.API_BASE_URL}/api/staff/update-order-status`, {
+          fetchWithAuth('/api/staff/update-order-status', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               orderId,
               newStatus: 'completed',

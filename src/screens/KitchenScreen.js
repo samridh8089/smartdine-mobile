@@ -11,6 +11,7 @@ import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Updates from 'expo-updates';
 import { supabase } from '../lib/supabase';
+import { fetchWithAuth } from '../lib/apiClient';
 import { CONFIG } from '../shared/config';
 import { startAlarm, stopAlarm, stopAllAlarms, playAlertLoop, muteAllAlarms } from '../lib/alarmManager';
 import { unregisterPushToken, sendLocalNotification } from '../lib/notifications';
@@ -289,9 +290,8 @@ export default function KitchenScreen({ route }) {
       // 1. Call authoritative backend API first to run inventoryEngine transitions
       let apiSuccess = false;
       try {
-        const apiRes = await fetch(`${CONFIG.API_BASE_URL}/api/staff/update-order-status`, {
+        const apiRes = await fetchWithAuth('/api/staff/update-order-status', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             batchId: targetId,
             orderId: batch.order_id,
@@ -418,9 +418,8 @@ export default function KitchenScreen({ route }) {
           const cancelTableId = parentOrd?.table_id || target.orders?.table_id;
           if (cancelTableId) {
             try {
-              fetch(`${CONFIG.API_BASE_URL}/api/staff/update-order-status`, {
+              fetchWithAuth('/api/staff/update-order-status', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                   orderId,
                   newStatus: 'cancelled',

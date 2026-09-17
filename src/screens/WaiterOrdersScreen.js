@@ -10,6 +10,7 @@ import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
+import { fetchWithAuth } from '../lib/apiClient';
 import { CONFIG } from '../shared/config';
 import { startAlarm, stopAlarm, stopAllAlarms } from '../lib/alarmManager';
 import { sendLocalNotification, unregisterPushToken } from '../lib/notifications';
@@ -211,9 +212,8 @@ export default function WaiterOrdersScreen({ route }) {
 
       let apiSuccess = false;
       try {
-        const apiRes = await fetch(`${CONFIG.API_BASE_URL}/api/staff/update-order-status`, {
+        const apiRes = await fetchWithAuth('/api/staff/update-order-status', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             orderId,
             newStatus: 'served',

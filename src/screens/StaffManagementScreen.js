@@ -7,6 +7,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
+import { fetchWithAuth } from '../lib/apiClient';
 import { COLORS } from '../lib/theme';
 
 const ROLES = [
@@ -60,9 +61,11 @@ export default function StaffManagementScreen({ route, navigation }) {
     if (!restaurantId) return;
     loadStaff();
 
-    // Supabase Realtime subscription on `profiles` table for instant mobile staff sync
+    // Dual Realtime subscription: postgres_changes on profiles + broadcast on staff_${restaurantId}
     const channel = supabase
-      .channel(`mobile_staff_realtime_${restaurantId}`)
+      .channel(`staff_${restaurantId}`, {
+        config: { broadcast: { self: true } }
+      })
       .on(
         'postgres_changes',
         {
@@ -71,8 +74,16 @@ export default function StaffManagementScreen({ route, navigation }) {
           table: 'profiles',
           filter: `restaurant_id=eq.${restaurantId}`
         },
-        () => {
-          console.log('[Realtime Mobile] Staff profile update detected. Auto-reloading staff list...');
+        (payload) => {
+          console.log('[Realtime Mobile] Staff profile change detected (postgres):', payload?.eventType);
+          loadStaff();
+        }
+      )
+      .on(
+        'broadcast',
+        { event: 'staff-updated' },
+        (payload) => {
+          console.log('[Realtime Mobile] Staff broadcast received:', payload?.payload?.action);
           loadStaff();
         }
       )
@@ -89,7 +100,8 @@ export default function StaffManagementScreen({ route, navigation }) {
     try {
       // 1. Try server API endpoint (bypasses mobile RLS restrictions)
       try {
-        const res = await fetch(`https://www.cleverops.in/api/staff/list?restaurantId=${restaurantId}`).then(r => r.json());
+        const response = await fetchWithAuth(`/api/staff/list?restaurantId=${restaurantId}`);
+        const res = await response.json();
         if (res?.success && Array.isArray(res.staff)) {
           setStaff(res.staff);
           setLoading(false);
@@ -192,9 +204,8 @@ export default function StaffManagementScreen({ route, navigation }) {
       const cleanEmail = email.trim().toLowerCase();
       const resolvedDept = role === 'supervisor' ? department : (role === 'waiter' ? 'waiter' : role === 'kitchen' ? 'kitchen' : 'general');
 
-      const response = await fetch('https://www.cleverops.in/api/staff/create-invite', {
+      const response = await fetchWithAuth('/api/staff/create-invite', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: name.trim(),
           email: cleanEmail,
@@ -253,16 +264,16 @@ export default function StaffManagementScreen({ route, navigation }) {
 
     setVerifyingOtp(true);
     try {
-      const res = await fetch('https://www.cleverops.in/api/staff/verify-otp', {
+      const response = await fetchWithAuth('/api/staff/verify-otp', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email: verifyingEmail,
           otp: cleanOtp,
           staffId: verifyingStaffId,
           restaurantId
         })
-      }).then(r => r.json());
+      });
+      const res = await response.json();
 
       if (res.error) throw new Error(res.error);
 
@@ -281,11 +292,11 @@ export default function StaffManagementScreen({ route, navigation }) {
 
   async function handleResendVerification(st) {
     try {
-      const res = await fetch('https://www.cleverops.in/api/staff/resend-verification', {
+      const response = await fetchWithAuth('/api/staff/resend-verification', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: st.email, userId: st.id })
-      }).then(r => r.json());
+      });
+      const res = await response.json();
 
       if (res.error) throw new Error(res.error);
 

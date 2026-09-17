@@ -8,6 +8,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../lib/supabase';
+import { fetchWithAuth } from '../lib/apiClient';
 import { COLORS, FONTS, RADIUS, SHADOWS, formatCurrency } from '../lib/theme';
 import { CONFIG } from '../shared/config';
 
@@ -162,9 +163,8 @@ export default function WaiterPunchScreen({ route }) {
         staffName: profile?.full_name || 'Waiter/Owner'
       };
 
-      const response = await fetch(apiEndpoint, {
+      const response = await fetchWithAuth(apiEndpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
 
