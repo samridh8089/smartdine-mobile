@@ -26,7 +26,7 @@
     "android": {
       "package": "com.smartdine.mobile",
       "googleServicesFile": "./google-services.json",
-      "versionCode": 13,
+      "versionCode": 14,
       "permissions": [
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE",
