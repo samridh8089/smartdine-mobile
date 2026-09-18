@@ -2,11 +2,29 @@ const Metro = require('metro');
 const path = require('path');
 const fs = require('fs');
 
+// Load environment variables from .env if present
+const envPath = path.join(__dirname, '.env');
+if (fs.existsSync(envPath)) {
+  const envContent = fs.readFileSync(envPath, 'utf8');
+  for (const line of envContent.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith('#')) {
+      const idx = trimmed.indexOf('=');
+      if (idx !== -1) {
+        const key = trimmed.substring(0, idx).trim();
+        const val = trimmed.substring(idx + 1).trim();
+        process.env[key] = val;
+      }
+    }
+  }
+}
+
 async function build() {
   console.log('Loading Metro config...');
   const config = await Metro.loadConfig({
     config: path.join(__dirname, 'metro.config.js')
   });
+  config.resetCache = true;
 
   const outDir = path.join(__dirname, 'dist-android');
   if (!fs.existsSync(outDir)) {
