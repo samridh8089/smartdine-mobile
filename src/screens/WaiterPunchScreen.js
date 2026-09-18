@@ -160,7 +160,8 @@ export default function WaiterPunchScreen({ route }) {
         specialInstructions: notes || '',
         orderType,
         paymentStatus: markPaid ? 'paid' : 'pending',
-        staffName: profile?.full_name || 'Waiter/Owner'
+        staffName: profile?.full_name || 'Waiter/Owner',
+        idempotencyKey: `punch_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
       };
 
       const response = await fetchWithAuth(apiEndpoint, {
@@ -200,7 +201,11 @@ export default function WaiterPunchScreen({ route }) {
     const hasVariants = variants.length > 0;
 
     return (
-      <View style={styles.menuCard}>
+      <TouchableOpacity
+        style={styles.menuCard}
+        onPress={() => handleItemClick(item)}
+        activeOpacity={0.7}
+      >
         <View style={styles.menuCardHeader}>
           <View style={[styles.vegIndicator, { borderColor: item.is_veg === false ? '#ef4444' : '#22c55e' }]}>
             <View style={[styles.vegIndicatorInner, { backgroundColor: item.is_veg === false ? '#ef4444' : '#22c55e' }]} />
@@ -218,17 +223,16 @@ export default function WaiterPunchScreen({ route }) {
         )}
 
         <View style={styles.menuCardFooter}>
-          <TouchableOpacity
+          <View
             style={[styles.addBtn, hasVariants && { backgroundColor: '#eff6ff', borderColor: '#2563eb' }]}
-            onPress={() => handleItemClick(item)}
           >
             <Ionicons name="add" size={16} color={hasVariants ? '#2563eb' : COLORS.primary} style={{ marginRight: 4 }} />
             <Text style={[styles.addBtnText, hasVariants && { color: '#2563eb' }]}>
               {hasVariants ? 'Select' : (qty > 0 ? `Add (${qty})` : 'Add')}
             </Text>
-          </TouchableOpacity>
+          </View>
         </View>
-      </View>
+      </TouchableOpacity>
     );
   };
 
@@ -553,7 +557,10 @@ export default function WaiterPunchScreen({ route }) {
                 onPress={submitOrder}
               >
                 {submitting ? (
-                  <ActivityIndicator color="#fff" size="small" />
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+                    <ActivityIndicator color="#fff" size="small" />
+                    <Text style={[styles.submitBtnText, { marginLeft: 8 }]}>Placing Order...</Text>
+                  </View>
                 ) : (
                   <>
                     <Ionicons name="checkmark-circle-outline" size={20} color="#fff" style={{ marginRight: 6 }} />

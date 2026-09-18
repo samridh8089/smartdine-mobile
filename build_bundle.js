@@ -19,12 +19,14 @@ if (fs.existsSync(envPath)) {
   }
 }
 
+process.env.NODE_OPTIONS = '--max-old-space-size=4096';
+
 async function build() {
   console.log('Loading Metro config...');
   const config = await Metro.loadConfig({
     config: path.join(__dirname, 'metro.config.js')
   });
-  config.resetCache = true;
+  config.maxWorkers = 1;
 
   const outDir = path.join(__dirname, 'dist-android');
   if (!fs.existsSync(outDir)) {

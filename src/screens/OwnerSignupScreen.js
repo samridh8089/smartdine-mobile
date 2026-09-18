@@ -202,22 +202,27 @@ export default function OwnerSignupScreen({ navigation }) {
 
     if (!cleanName) {
       setErrorMsg('Please enter your full name.');
+      Alert.alert('Incomplete Form', 'Please enter your full name.');
       return;
     }
     if (!cleanPhone || cleanPhone.length < 10) {
       setErrorMsg('Please enter a valid 10-digit mobile number.');
+      Alert.alert('Invalid Mobile Number', 'Please enter a valid 10-digit mobile number.');
       return;
     }
     if (!cleanEmail || !cleanEmail.includes('@')) {
       setErrorMsg('Please enter a valid email address.');
+      Alert.alert('Invalid Email', 'Please enter a valid email address.');
       return;
     }
     if (password.length < 6) {
       setErrorMsg('Password must be at least 6 characters.');
+      Alert.alert('Weak Password', 'Password must be at least 6 characters long.');
       return;
     }
     if (password !== confirmPassword) {
       setErrorMsg('Passwords do not match. Please verify.');
+      Alert.alert('Password Mismatch', 'Passwords do not match. Please verify.');
       return;
     }
 
@@ -238,7 +243,9 @@ export default function OwnerSignupScreen({ navigation }) {
           .maybeSingle();
 
         if (activeRest) {
-          setErrorMsg('An active account with this email address already exists. Please log in.');
+          const dupMsg = 'An active account with this email address already exists. Please log in.';
+          setErrorMsg(dupMsg);
+          Alert.alert('Account Exists', dupMsg);
           setLoading(false);
           return;
         }
@@ -270,7 +277,9 @@ export default function OwnerSignupScreen({ navigation }) {
       setResendCooldown(30);
       setCurrentStep(2);
     } catch (err) {
-      setErrorMsg(err?.message || 'Failed to initialize verification.');
+      const failMsg = err?.message || 'Failed to initialize verification.';
+      setErrorMsg(failMsg);
+      Alert.alert('Signup Notice', failMsg);
     } finally {
       setLoading(false);
     }
@@ -282,7 +291,9 @@ export default function OwnerSignupScreen({ navigation }) {
     const cleanEmailCode = (overrideEmailCode || emailOtp).trim().replace(/\D/g, '');
 
     if (!/^\d{8}$/.test(cleanEmailCode)) {
-      setErrorMsg('Invalid OTP. Please enter the correct 8-digit code.');
+      const err = 'Invalid OTP. Please enter the correct 8-digit code.';
+      setErrorMsg(err);
+      Alert.alert('Invalid Code', 'Please enter the full 8-digit verification code sent to your email.');
       return;
     }
 
@@ -309,7 +320,9 @@ export default function OwnerSignupScreen({ navigation }) {
         if (verifyData.newSessionId) {
           setOtpSessionId(verifyData.newSessionId);
         }
-        setErrorMsg(verifyData.error || 'Invalid OTP. Please enter the correct 8-digit code.');
+        const err = verifyData.error || 'Invalid OTP. Please enter the correct 8-digit code.';
+        setErrorMsg(err);
+        Alert.alert('Verification Failed', err);
         setLoading(false);
         return;
       }
@@ -318,7 +331,9 @@ export default function OwnerSignupScreen({ navigation }) {
       setCurrentStep(3);
     } catch (err) {
       console.error('[Verify OTP Exception]:', err);
-      setErrorMsg('Could not verify OTP. Please check your internet connection and try again.');
+      const errTxt = 'Could not verify OTP. Please check your internet connection and try again.';
+      setErrorMsg(errTxt);
+      Alert.alert('Verification Error', errTxt);
     } finally {
       setLoading(false);
     }
@@ -362,14 +377,17 @@ export default function OwnerSignupScreen({ navigation }) {
     setErrorMsg('');
     if (!restaurantName.trim()) {
       setErrorMsg('Please enter your restaurant name.');
+      Alert.alert('Missing Name', 'Please enter your restaurant name.');
       return;
     }
     if (!city.trim()) {
       setErrorMsg('Please enter your city.');
+      Alert.alert('Missing City', 'Please enter your city.');
       return;
     }
     if (!address.trim()) {
       setErrorMsg('Please enter restaurant address.');
+      Alert.alert('Missing Address', 'Please enter restaurant address.');
       return;
     }
 
@@ -445,7 +463,8 @@ export default function OwnerSignupScreen({ navigation }) {
           }
         }
 
-        const checkRes = await fetch(`${API_BASE}/api/auth/check-email-availability`, {
+        const apiHost = CONFIG?.API_BASE_URL || 'https://www.cleverops.in';
+        const checkRes = await fetch(`${apiHost}/api/auth/check-email-availability`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email: cleanEmail })

@@ -119,7 +119,9 @@ export default function LoginScreen({ navigation }) {
       if (!isProfileActive && !isOwnerOrSuper) {
         await supabase.auth.signOut().catch(() => {});
         setCheckingSession(false);
-        setErrorMsg('Your staff account has been deactivated. Please contact your manager or administrator.');
+        const deactMsg = 'Your staff account has been deactivated. Please contact your manager or administrator.';
+        setErrorMsg(deactMsg);
+        Alert.alert('Account Deactivated', deactMsg);
         animateIn();
         return;
       }
@@ -141,7 +143,9 @@ export default function LoginScreen({ navigation }) {
     } catch (e) {
       console.log('[LoginScreen] profile fetch error:', e?.message);
       setCheckingSession(false);
-      setErrorMsg('Your account role could not be verified. Please contact your administrator.');
+      const err = 'Your account role could not be verified. Please contact your administrator.';
+      setErrorMsg(err);
+      Alert.alert('Access Denied', err);
       animateIn();
     }
   }
@@ -175,6 +179,7 @@ export default function LoginScreen({ navigation }) {
         break;
       default:
         setErrorMsg('Your account role could not be verified. Please contact your administrator.');
+        Alert.alert('Role Unassigned', 'Your account role could not be verified. Please contact your administrator.');
         break;
     }
   }
@@ -188,10 +193,12 @@ export default function LoginScreen({ navigation }) {
 
     if (!cleanEmail) {
       setErrorMsg('Please enter your email address.');
+      Alert.alert('Missing Email', 'Please enter your email address.');
       return;
     }
     if (!cleanPassword) {
       setErrorMsg('Please enter your password.');
+      Alert.alert('Missing Password', 'Please enter your password.');
       return;
     }
 
@@ -205,17 +212,25 @@ export default function LoginScreen({ navigation }) {
       });
 
       if (error) {
-        setErrorMsg(error.message || 'Invalid email or password. Please try again.');
+        const readableMsg = (error.message && (error.message.includes('Invalid login credentials') || error.message.includes('invalid_grant')))
+          ? 'Incorrect email or password. Please verify your credentials and try again.'
+          : (error.message || 'Invalid email or password. Please try again.');
+        setErrorMsg(readableMsg);
+        Alert.alert('Login Failed', readableMsg);
         return;
       }
 
       if (data?.user) {
         await fetchProfileAndNavigate(data.user.id);
       } else {
-        setErrorMsg('Login failed. Please try again.');
+        const failMsg = 'Login failed. Please try again.';
+        setErrorMsg(failMsg);
+        Alert.alert('Login Failed', failMsg);
       }
     } catch (e) {
-      setErrorMsg(e?.message || 'Network error. Check your internet connection.');
+      const netMsg = e?.message || 'Network error. Check your internet connection.';
+      setErrorMsg(netMsg);
+      Alert.alert('Login Error', netMsg);
     } finally {
       setLoading(false);
     }
@@ -229,16 +244,18 @@ export default function LoginScreen({ navigation }) {
     }
     setForgotLoading(true);
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(clean);
+      const { error } = await supabase.auth.resetPasswordForEmail(clean, {
+        redirectTo: 'https://www.cleverops.in/auth/callback?next=/reset-password'
+      });
       if (error) throw error;
       Alert.alert(
         'Reset Instructions Sent',
-        `If an account is associated with ${clean}, password reset instructions have been sent.`
+        `If an account is associated with ${clean}, password reset instructions have been sent to your email.`
       );
       setForgotModalVisible(false);
       setForgotEmail('');
     } catch (e) {
-      Alert.alert('Password Reset', e?.message || 'Failed to send password reset email.');
+      Alert.alert('Password Reset Failed', e?.message || 'Failed to send password reset email.');
     } finally {
       setForgotLoading(false);
     }
