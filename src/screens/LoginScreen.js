@@ -249,7 +249,7 @@ export default function LoginScreen({ navigation }) {
       <View style={styles.splashContainer}>
         <StatusBar barStyle="light-content" backgroundColor={COLORS.primary} />
         <View style={styles.splashLogoCircle}>
-          <MaterialCommunityIcons name="silverware-fork-knife" size={40} color="#ffffff" />
+          <Image source={require('../../assets/icon.png')} style={styles.splashLogoImage} resizeMode="contain" />
         </View>
         <Text style={styles.splashTitle}>CleverOps</Text>
         <Text style={styles.splashSubtitle}>Staff & Operations Portal</Text>
@@ -274,7 +274,7 @@ export default function LoginScreen({ navigation }) {
             {/* Top Brand Header */}
             <View style={styles.brandHeader}>
               <View style={styles.logoCircle}>
-                <MaterialCommunityIcons name="silverware-fork-knife" size={32} color="#ffffff" />
+                <Image source={require('../../assets/icon.png')} style={styles.logoImage} resizeMode="contain" />
               </View>
               <Text style={styles.appName}>CleverOps</Text>
               <Text style={styles.appTagline}>Smart Restaurant Operations</Text>
@@ -497,13 +497,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   splashLogoCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    backgroundColor: '#ffffff',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 16,
+    overflow: 'hidden',
+    elevation: 8,
+    shadowColor: '#000000',
+    shadowOpacity: 0.2,
+    shadowRadius: 10,
+  },
+  splashLogoImage: {
+    width: 68,
+    height: 68,
   },
   splashTitle: {
     fontSize: 30,
@@ -532,17 +541,24 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   logoCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: COLORS.primary,
+    width: 72,
+    height: 72,
+    borderRadius: 22,
+    backgroundColor: '#ffffff',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 12,
     elevation: 6,
-    shadowColor: COLORS.primary,
-    shadowOpacity: 0.35,
+    shadowColor: '#000000',
+    shadowOpacity: 0.12,
     shadowRadius: 10,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  logoImage: {
+    width: 58,
+    height: 58,
   },
   appName: {
     fontSize: 26,
