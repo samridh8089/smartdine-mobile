@@ -266,7 +266,7 @@ export default function LoginScreen({ navigation }) {
       <View style={styles.splashContainer}>
         <StatusBar barStyle="light-content" backgroundColor={COLORS.primary} />
         <View style={styles.splashLogoCircle}>
-          <Image source={require('../../assets/icon.png')} style={styles.splashLogoImage} resizeMode="contain" />
+          <Image source={require('../../assets/logo.png')} style={{ width: 56, height: 56, resizeMode: 'contain' }} />
         </View>
         <Text style={styles.splashTitle}>CleverOps</Text>
         <Text style={styles.splashSubtitle}>Staff & Operations Portal</Text>
@@ -290,8 +290,8 @@ export default function LoginScreen({ navigation }) {
           >
             {/* Top Brand Header */}
             <View style={styles.brandHeader}>
-              <View style={styles.logoCircle}>
-                <Image source={require('../../assets/icon.png')} style={styles.logoImage} resizeMode="contain" />
+              <View style={[styles.logoCircle, { backgroundColor: 'transparent', elevation: 0, shadowOpacity: 0 }]}>
+                <Image source={require('../../assets/logo.png')} style={{ width: 64, height: 64, resizeMode: 'contain' }} />
               </View>
               <Text style={styles.appName}>CleverOps</Text>
               <Text style={styles.appTagline}>Smart Restaurant Operations</Text>
