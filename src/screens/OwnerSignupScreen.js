@@ -81,7 +81,6 @@ export default function OwnerSignupScreen({ navigation }) {
   useEffect(() => {
     async function forceCleanStateForSignup() {
       try {
-        await supabase.auth.signOut().catch(() => {});
         const keys = [
           '@smartdine_user_session',
           '@smartdine_kitchen_pending_queue',

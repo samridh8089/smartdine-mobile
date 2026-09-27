@@ -316,13 +316,12 @@ export default function SubscriptionScreen({ route, navigation }) {
             });
 
             const PLAN_RANK = { starter: 1, pro: 2, premium: 3, custom: 4 };
-            const currentRank = PLAN_RANK[currentPlanId] || 1;
-            const currentInterval = restaurantData?.billing_interval || 'monthly';
+            const currentInterval = (restaurantData?.billing_interval || 'monthly').toLowerCase();
 
             return uniquePlans.map((plan) => {
               const targetRank = PLAN_RANK[plan.id.toLowerCase()] || 1;
-              const isCurrent = currentPlanId === plan.id.toLowerCase() && currentStatus === 'active' && billingInterval === currentInterval;
-              const isSamePlanDifferentInterval = currentPlanId === plan.id.toLowerCase() && currentStatus === 'active' && billingInterval !== currentInterval;
+              const isCurrent = currentPlanId === plan.id.toLowerCase() && currentStatus === 'active' && billingInterval.toLowerCase() === currentInterval;
+              const isSamePlanDifferentInterval = currentPlanId === plan.id.toLowerCase() && currentStatus === 'active' && billingInterval.toLowerCase() !== currentInterval;
               const isExpiredCurrentPlan = currentPlanId === plan.id.toLowerCase() && currentStatus !== 'active';
               const isUpgrade = targetRank > currentRank;
               const isDowngrade = targetRank < currentRank;

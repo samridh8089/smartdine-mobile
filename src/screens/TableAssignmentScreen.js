@@ -6,6 +6,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
+import { fetchWithAuth } from '../lib/apiClient';
 import { COLORS } from '../lib/theme';
 import {
   fetchTableAssignments,
@@ -77,16 +78,48 @@ export default function TableAssignmentScreen({ route, navigation }) {
       setTables(liveTbls || []);
       if (stats) setTableStats(stats);
 
+      let staffList = [];
+      try {
+        const response = await fetchWithAuth(`/api/staff/list?restaurantId=${restaurantId}`);
+        const res = await response.json();
+        if (res?.success && Array.isArray(res.staff)) {
+          staffList = res.staff;
+        }
+      } catch (apiErr) {
+        console.log('[TableAssignmentScreen] API staff list fetch failed, falling back:', apiErr?.message);
+      }
+
+      if (staffList.length === 0) {
+        const { data: rest } = await supabase
+          .from('restaurants')
+          .select('settings')
+          .eq('id', restaurantId)
+          .maybeSingle();
+
+        const staffMeta = rest?.settings?.staff_metadata || {};
+        const metaStaff = Object.entries(staffMeta).map(([id, s]) => ({ id, ...s }));
+        if (metaStaff.length > 0) {
+          staffList = metaStaff;
+        }
+      }
+
       const { data: profData } = await supabase
         .from('profiles')
         .select('*')
         .eq('restaurant_id', restaurantId);
 
-      const staffList = (profData || []).filter(p => 
+      if (profData && profData.length > 0) {
+        const existingIds = new Set(staffList.map(s => s.id));
+        profData.forEach(p => {
+          if (!existingIds.has(p.id)) staffList.push(p);
+        });
+      }
+
+      const activeWaiters = (staffList || []).filter(p => 
         p.role !== 'deleted' && p.role !== 'inactive' && !p.deleted_at &&
-        (p.role === 'waiter' || (p.role === 'supervisor' && (p.department === 'waiter' || !p.department)))
+        (p.role === 'waiter' || p.department === 'waiter' || p.role === 'supervisor')
       );
-      setWaiters(staffList);
+      setWaiters(activeWaiters);
 
       const assigns = await fetchTableAssignments(restaurantId);
       setAssignments(assigns || []);

@@ -252,7 +252,10 @@ export default function App() {
         }
         try {
           if (navigationRef.isReady()) {
-            navigationRef.reset({ index: 0, routes: [{ name: 'Login' }] });
+            const currentRoute = navigationRef.getCurrentRoute()?.name;
+            if (currentRoute && currentRoute !== 'Login' && currentRoute !== 'OwnerSignup') {
+              navigationRef.reset({ index: 0, routes: [{ name: 'Login' }] });
+            }
           }
         } catch (e) {
           console.log('[App] Nav reset error:', e?.message);

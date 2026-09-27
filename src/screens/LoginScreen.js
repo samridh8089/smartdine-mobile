@@ -204,8 +204,6 @@ export default function LoginScreen({ navigation }) {
 
     setLoading(true);
     try {
-      await supabase.auth.signOut().catch(() => {});
-
       const { data, error } = await supabase.auth.signInWithPassword({
         email: cleanEmail,
         password: cleanPassword,
@@ -442,11 +440,7 @@ export default function LoginScreen({ navigation }) {
               {/* Create Restaurant Account (Owner Signup) */}
               <TouchableOpacity
                 style={styles.signupBtn}
-                onPress={async () => {
-                  try {
-                    await supabase.auth.signOut().catch(() => {});
-                    await AsyncStorage.clear().catch(() => {});
-                  } catch (e) {}
+                onPress={() => {
                   navigation.navigate('OwnerSignup');
                 }}
                 activeOpacity={0.8}
