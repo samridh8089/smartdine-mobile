@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
   ActivityIndicator, KeyboardAvoidingView, Platform,
-  Animated, StatusBar, ScrollView, TouchableWithoutFeedback, Keyboard, Alert, Image, Modal,
+  Animated, StatusBar, ScrollView, TouchableWithoutFeedback, Keyboard, Alert, Image, Modal, Vibration,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -373,8 +373,8 @@ export default function LoginScreen({ navigation }) {
                     <Text style={{ fontSize: 11, fontWeight: '700', color: COLORS.primary }}>Forgot Password?</Text>
                   </TouchableOpacity>
                 </View>
-                <View style={styles.inputWrapper}>
-                  <Ionicons name="lock-closed-outline" size={20} color="#94a3b8" style={styles.inputIcon} />
+                <View style={[styles.inputWrapper, !!errorMsg && { borderColor: '#ef4444', borderWidth: 1.5 }]}>
+                  <Ionicons name="lock-closed-outline" size={20} color={errorMsg ? '#ef4444' : '#94a3b8'} style={styles.inputIcon} />
                   <TextInput
                     style={styles.input}
                     placeholder="••••••••"
@@ -395,6 +395,32 @@ export default function LoginScreen({ navigation }) {
                   </TouchableOpacity>
                 </View>
               </View>
+
+              {/* Prominent Error Banner above Sign In Button for immediate tactile feedback */}
+              {!!errorMsg && (
+                <View style={{
+                  backgroundColor: '#fef2f2',
+                  borderWidth: 1.5,
+                  borderColor: '#ef4444',
+                  borderRadius: 12,
+                  paddingVertical: 10,
+                  paddingHorizontal: 12,
+                  marginBottom: 14,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 8,
+                  shadowColor: '#ef4444',
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowOpacity: 0.15,
+                  shadowRadius: 4,
+                  elevation: 2,
+                }}>
+                  <Ionicons name="alert-circle" size={20} color="#dc2626" />
+                  <Text style={{ flex: 1, color: '#b91c1c', fontSize: 13, fontWeight: '700', lineHeight: 18 }}>
+                    {errorMsg}
+                  </Text>
+                </View>
+              )}
 
               {/* Sign In Button */}
               <TouchableOpacity
