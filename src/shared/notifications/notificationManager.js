@@ -34,9 +34,13 @@ export async function setupNotificationChannel() {
 
     const channels = [
       { id: 'smartdine_kitchen', name: 'CleverOps Kitchen Orders' },
+      { id: 'smartdine_kitchen_v2', name: 'CleverOps Kitchen Orders v2' },
       { id: 'smartdine_waiter', name: 'CleverOps Waiter Calls' },
+      { id: 'smartdine_waiter_v2', name: 'CleverOps Waiter Calls v2' },
       { id: 'smartdine_owner', name: 'CleverOps Owner Alerts' },
+      { id: 'smartdine_owner_v2', name: 'CleverOps Owner Alerts v2' },
       { id: CONFIG.NOTIFICATION_CHANNEL_ID || 'smartdine-urgent-v3', name: CONFIG.NOTIFICATION_CHANNEL_NAME || 'CleverOps Staff Alerts' },
+      { id: 'smartdine-urgent-channel', name: 'CleverOps Urgent Channel' },
     ];
 
     for (const ch of channels) {
