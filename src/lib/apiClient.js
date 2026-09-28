@@ -56,6 +56,7 @@ export async function fetchWithAuth(urlOrPath, options = {}) {
 
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
+    headers['x-staff-token'] = token;
   } else {
     console.warn('[apiClient] No Supabase access token found for request to:', fullUrl);
   }
@@ -73,6 +74,7 @@ export async function fetchWithAuth(urlOrPath, options = {}) {
       if (!refreshErr && refreshData?.session?.access_token) {
         token = refreshData.session.access_token;
         headers['Authorization'] = `Bearer ${token}`;
+        headers['x-staff-token'] = token;
         response = await fetch(fullUrl, {
           ...options,
           headers

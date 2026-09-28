@@ -300,7 +300,7 @@ export default function KitchenScreen({ route }) {
           })
         }).then(r => r.json());
 
-        if (apiRes && apiRes.success) {
+        if (apiRes && (apiRes.success || apiRes.order || apiRes.batch)) {
           apiSuccess = true;
         }
       } catch (apiErr) {
