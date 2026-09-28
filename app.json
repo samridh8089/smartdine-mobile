@@ -50,7 +50,7 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/icon.png",
+          "icon": "./assets/notification-icon.png",
           "color": "#059669",
           "defaultChannel": "smartdine-urgent-v3",
           "sounds": [

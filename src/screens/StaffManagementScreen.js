@@ -137,7 +137,7 @@ export default function StaffManagementScreen({ route, navigation }) {
         ...p,
         department: p.department || staffMeta[p.id]?.department || (p.role === 'waiter' ? 'waiter' : p.role === 'kitchen' ? 'kitchen' : 'general'),
         phone: p.phone || staffMeta[p.id]?.phone || '',
-        plain_password: p.plain_password || staffMeta[p.id]?.plain_password || (p.email?.startsWith('d@') || p.email?.startsWith('you@') ? '123456' : null),
+        plain_password: p.plain_password || staffMeta[p.id]?.plain_password || null,
         is_active: p.is_active !== undefined ? p.is_active : (staffMeta[p.id]?.is_active !== false),
       }));
 
@@ -442,7 +442,7 @@ export default function StaffManagementScreen({ route, navigation }) {
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Text style={styles.passwordValue}>
               {visiblePasswords[st.id]
-                ? (st.plain_password || '123456')
+                ? (st.plain_password || 'Protected')
                 : (st.plain_password ? '••••••••' : '•••••••• (Encrypted)')}
             </Text>
             <TouchableOpacity

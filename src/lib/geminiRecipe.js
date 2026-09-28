@@ -252,7 +252,125 @@ export function getDetailedCulinaryRecipe(dishName) {
     };
   }
 
-  // 9. Universal High-Quality Commercial Culinary Recipe
+  // 9. Noodles / Maggi / Pasta / Chowmein / Macaroni
+  if (/maggi|maggie|noodle|noodles|pasta|macaroni|chowmein|chow mein|spaghetti|ramen/.test(norm)) {
+    const isCheese = /cheese/.test(norm);
+    const isPasta = /pasta|macaroni|penne|white sauce|red sauce/.test(norm);
+
+    if (isPasta) {
+      const isWhiteSauce = /white|alfredo|bechamel/.test(norm);
+      return {
+        success: true,
+        recipeName: dishName || 'Chef Gourmet Pasta',
+        providerUsed: 'CleverOps Executive Master Chef Engine',
+        servingSize: '1 Bowl Portion (300g)',
+        prepTimeMinutes: 10,
+        cookTimeMinutes: 15,
+        totalTimeMinutes: 25,
+        preparationSteps: '1. Boil pasta in salted water with a few drops of oil until al dente.\n2. In a pan, melt butter and sauté minced garlic, bell peppers, and sweet corn.\n3. Prepare rich sauce (fresh cream, milk, and cheese for white sauce; spiced tomato-herb marinara for red sauce).\n4. Toss boiled pasta with the sauce on medium flame.\n5. Season with oregano, red chilli flakes, and black pepper. Top with shredded mozzarella/parmesan before serving.',
+        ingredients: [
+          { name: 'Durum Wheat Pasta / Macaroni', suggestedQuantity: 100, suggestedUnit: 'gram' },
+          { name: isWhiteSauce ? 'Fresh Dairy Cream' : 'Marinara Tomato Sauce', suggestedQuantity: 120, suggestedUnit: 'ml' },
+          { name: 'Pure Dairy Butter', suggestedQuantity: 20, suggestedUnit: 'gram' },
+          { name: isWhiteSauce ? 'Full Cream Milk' : 'Chopped Bell Peppers', suggestedQuantity: isWhiteSauce ? 100 : 40, suggestedUnit: isWhiteSauce ? 'ml' : 'gram' },
+          { name: 'Shredded Mozzarella / Processed Cheese', suggestedQuantity: 40, suggestedUnit: 'gram' },
+          { name: 'Italian Herbs & Oregano Seasoning', suggestedQuantity: 5, suggestedUnit: 'gram' },
+          { name: 'Black Pepper & Red Chilli Flakes', suggestedQuantity: 4, suggestedUnit: 'gram' }
+        ]
+      };
+    }
+
+    return {
+      success: true,
+      recipeName: dishName || 'Chef Special Maggi',
+      providerUsed: 'CleverOps Executive Master Chef Engine',
+      servingSize: '1 Portion (280g)',
+      prepTimeMinutes: 5,
+      cookTimeMinutes: 10,
+      totalTimeMinutes: 15,
+      preparationSteps: isCheese
+        ? '1. Heat pure dairy butter in a pan, lightly sauté chopped onions, green chillies, and sweet corn.\n2. Pour in 250ml boiling water and bring to a rolling boil.\n3. Add Maggi tastemaker masala blend and stir thoroughly.\n4. Break in Maggi instant noodles cake and cook on medium flame for 2-3 minutes until water is mostly absorbed.\n5. Grate generous processed/mozzarella cheese directly over the hot noodles.\n6. Cover with a lid for 30 seconds to melt cheese completely, garnish with fresh coriander/oregano and serve piping hot.'
+        : '1. Heat cooking butter/oil in a pan, sauté finely chopped onions, tomatoes, and green chillies.\n2. Add boiling water (250ml) and stir in Maggi tastemaker masala spice blend.\n3. Add noodle cake and cook on medium flame for 2-3 minutes until noodles are tender and sauce is thick.\n4. Garnish with fresh chopped coriander and butter before serving hot.',
+      ingredients: [
+        { name: 'Maggi Instant Noodles Cake', suggestedQuantity: 70, suggestedUnit: 'gram' },
+        ...(isCheese ? [{ name: 'Processed / Mozzarella Cheese (Grated)', suggestedQuantity: 40, suggestedUnit: 'gram' }] : []),
+        { name: 'Maggi Tastemaker / Masala Blend', suggestedQuantity: 6, suggestedUnit: 'gram' },
+        { name: 'Pure Dairy Butter', suggestedQuantity: 15, suggestedUnit: 'gram' },
+        { name: 'Filtered Boiling Water', suggestedQuantity: 250, suggestedUnit: 'ml' },
+        { name: 'Chopped Onion & Sweet Corn', suggestedQuantity: 30, suggestedUnit: 'gram' },
+        { name: 'Fresh Green Chilli & Coriander', suggestedQuantity: 10, suggestedUnit: 'gram' }
+      ]
+    };
+  }
+
+  // 10. Street Food & Snacks (Momos, Pav Bhaji, Chaat, Fries, Pakoda, Samosa)
+  if (/momo|momos|dumpling|pav bhaji|bhaji|french fry|fries|chaat|pani puri|samosa|pakoda|tikki/.test(norm)) {
+    const isPavBhaji = /pav bhaji|bhaji/.test(norm);
+    const isMomos = /momo|dumpling/.test(norm);
+
+    if (isPavBhaji) {
+      return {
+        success: true,
+        recipeName: dishName || 'Amritsari / Mumbai Pav Bhaji',
+        providerUsed: 'CleverOps Executive Master Chef Engine',
+        servingSize: '1 Plate (2 Pav + 250g Bhaji)',
+        prepTimeMinutes: 15,
+        cookTimeMinutes: 20,
+        totalTimeMinutes: 35,
+        preparationSteps: '1. Boil and mash potatoes, cauliflower, carrots, and green peas smoothly.\n2. Heat generous butter in a flat tawa, sauté finely chopped onions and capsicum.\n3. Add ginger-garlic paste, fresh tomato puree, Kashmiri red chilli powder, and Pav Bhaji Masala.\n4. Mix mashed vegetables with tempered spices and simmer on medium flame while mashing continuously.\n5. Slit pav buns, toast with abundant butter and coriander on hot tawa.\n6. Serve bhaji topped with a generous dollop of butter, chopped onions, and fresh lemon wedge.',
+        ingredients: [
+          { name: 'Boiled Mashed Mixed Vegetables (Potato, Peas, Cauliflower)', suggestedQuantity: 180, suggestedUnit: 'gram' },
+          { name: 'Pure Dairy Butter (Amul)', suggestedQuantity: 50, suggestedUnit: 'gram' },
+          { name: 'Pav Buns', suggestedQuantity: 2, suggestedUnit: 'piece' },
+          { name: 'Fresh Tomato Puree', suggestedQuantity: 80, suggestedUnit: 'ml' },
+          { name: 'Finely Chopped Onion & Capsicum', suggestedQuantity: 60, suggestedUnit: 'gram' },
+          { name: 'Pav Bhaji Masala Blend', suggestedQuantity: 10, suggestedUnit: 'gram' },
+          { name: 'Fresh Lemon & Coriander Garnish', suggestedQuantity: 15, suggestedUnit: 'gram' }
+        ]
+      };
+    }
+
+    if (isMomos) {
+      return {
+        success: true,
+        recipeName: dishName || 'Steamed Gourmet Momos',
+        providerUsed: 'CleverOps Executive Master Chef Engine',
+        servingSize: '1 Plate (6-8 Pieces)',
+        prepTimeMinutes: 20,
+        cookTimeMinutes: 10,
+        totalTimeMinutes: 30,
+        preparationSteps: '1. Knead refined flour (maida) into a smooth, elastic dough and rest for 15 minutes.\n2. Finely mince cabbage, carrots, onions, ginger, garlic, and paneer/chicken for stuffing.\n3. Season stuffing with soya sauce, black pepper, and sesame oil.\n4. Roll dough into thin translucent discs, place stuffing in center, and pleat tightly.\n5. Steam in a bamboo/metal steamer for 10-12 minutes until glossy and non-sticky.\n6. Serve hot with spicy red chilli garlic chutney.',
+        ingredients: [
+          { name: 'Refined Flour (Maida) for Dough', suggestedQuantity: 120, suggestedUnit: 'gram' },
+          { name: 'Finely Minced Vegetable / Protein Filling', suggestedQuantity: 150, suggestedUnit: 'gram' },
+          { name: 'Garlic Ginger & Green Chilli Mince', suggestedQuantity: 20, suggestedUnit: 'gram' },
+          { name: 'Soya Sauce & Cooking Oil', suggestedQuantity: 15, suggestedUnit: 'ml' },
+          { name: 'Spicy Red Chilli Garlic Chutney', suggestedQuantity: 40, suggestedUnit: 'ml' },
+          { name: 'Black Pepper & Salt Seasoning', suggestedQuantity: 5, suggestedUnit: 'gram' }
+        ]
+      };
+    }
+
+    return {
+      success: true,
+      recipeName: dishName || 'Crispy Peri Peri Fries',
+      providerUsed: 'CleverOps Executive Master Chef Engine',
+      servingSize: '1 Large Portion (200g)',
+      prepTimeMinutes: 5,
+      cookTimeMinutes: 8,
+      totalTimeMinutes: 13,
+      preparationSteps: '1. Cut potatoes into uniform batons, rinse and dry thoroughly.\n2. Deep fry in hot vegetable oil at 175°C until golden brown and crisp.\n3. Drain on absorbent paper.\n4. Immediately toss in peri peri spice blend or sea salt while hot.\n5. Serve with cheese dip and tomato ketchup.',
+      ingredients: [
+        { name: 'Potatoes / Frozen French Fries Batons', suggestedQuantity: 220, suggestedUnit: 'gram' },
+        { name: 'Refined Frying Oil', suggestedQuantity: 40, suggestedUnit: 'ml' },
+        { name: 'Peri Peri / Cajun Seasoning Blend', suggestedQuantity: 8, suggestedUnit: 'gram' },
+        { name: 'Cheese Dip / Mayonnaise', suggestedQuantity: 30, suggestedUnit: 'ml' },
+        { name: 'Tomato Ketchup', suggestedQuantity: 25, suggestedUnit: 'ml' }
+      ]
+    };
+  }
+
+  // 11. Universal High-Quality Commercial Culinary Recipe
   return {
     success: true,
     recipeName: dishName || 'Chef Special',
@@ -261,13 +379,13 @@ export function getDetailedCulinaryRecipe(dishName) {
     prepTimeMinutes: 15,
     cookTimeMinutes: 20,
     totalTimeMinutes: 35,
-    preparationSteps: `1. Prep and wash fresh primary ingredients for ${dishName}.\n2. Heat butter/ghee in a heavy pan, sauté base ingredients until golden.\n3. Add flavor base and simmer on medium flame to intensify taste.\n4. Incorporate main ingredients and cook thoroughly until tender.\n5. Finish with fresh cream and chef signature garnishes before plating.`,
+    preparationSteps: `1. Prep and wash fresh primary ingredients for ${dishName}.\n2. Heat pure butter or cooking oil in a heavy pan, sauté base aromatics.\n3. Add chef signature seasoning and simmer on medium flame to develop flavors.\n4. Cook main ingredients thoroughly until tender and aromatic.\n5. Finish with fresh herbs and garnishing before plating.`,
     ingredients: [
-      { name: `Fresh ${dishName} Primary Core`, suggestedQuantity: 200, suggestedUnit: 'gram' },
-      { name: 'Pure Dairy Butter / Ghee', suggestedQuantity: 30, suggestedUnit: 'ml' },
-      { name: 'Full Cream Milk / Flavor Base', suggestedQuantity: 80, suggestedUnit: 'ml' },
-      { name: 'Sweetener / Seasoning Blend', suggestedQuantity: 15, suggestedUnit: 'gram' },
-      { name: 'Fresh Herb / Nut Garnish', suggestedQuantity: 10, suggestedUnit: 'gram' }
+      { name: `${dishName} Main Cut / Protein`, suggestedQuantity: 180, suggestedUnit: 'gram' },
+      { name: 'Pure Dairy Butter / Cooking Oil', suggestedQuantity: 25, suggestedUnit: 'ml' },
+      { name: 'Chef Signature Gravy / Sauce Base', suggestedQuantity: 80, suggestedUnit: 'ml' },
+      { name: 'Aromatic Herb & Seasoning Blend', suggestedQuantity: 15, suggestedUnit: 'gram' },
+      { name: 'Fresh Herb & Cream Garnish', suggestedQuantity: 10, suggestedUnit: 'gram' }
     ]
   };
 }
