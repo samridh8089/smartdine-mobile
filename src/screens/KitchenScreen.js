@@ -174,7 +174,6 @@ export default function KitchenScreen({ route }) {
       if (hasNew && bellOn) {
         setHasNewOrder(true);
         startAlarm('new_order', '🔔 New Kitchen Order!', 'A new order needs kitchen attention');
-        sendLocalNotification('🔔 New Kitchen Order!', 'A new order needs kitchen attention', 'smartdine_kitchen');
         Vibration.vibrate([0, 1000, 500, 1000]);
       }
       if (newB.length === 0) {
@@ -276,9 +275,11 @@ export default function KitchenScreen({ route }) {
       const updated = { ...batch, status: 'ready', ready_by: staffName };
       setPreparingOrders(prev => prev.filter(b => b.id !== targetId));
       setReadyOrders(prev => [...prev.filter(b => b.id !== targetId), updated]);
+    } else if (newStatus === 'served' || newStatus === 'completed') {
+      setReadyOrders(prev => prev.filter(b => b.id !== targetId));
+      setPreparingOrders(prev => prev.filter(b => b.id !== targetId));
     }
 
-    setActionLoading(prev => ({ ...prev, [targetId]: true }));
     try {
       const now = new Date().toISOString();
       const updates = { status: newStatus, updated_at: now };
@@ -328,7 +329,7 @@ export default function KitchenScreen({ route }) {
       }
       setIsOffline(false);
       setLastActionLog(`✅ [SUCCESS] Batch #${targetId.slice(0, 6)} updated to ${newStatus.toUpperCase()}`);
-      await loadOrders();
+      loadOrders().catch(() => {});
     } catch (e) {
       console.log('Update batch error:', e?.message);
       setLastActionLog(`❌ [DB ERROR] ${e?.message || 'Update failed'}`);
@@ -711,7 +712,14 @@ export default function KitchenScreen({ route }) {
 
         <TouchableOpacity
           style={[styles.bellBtn, bellOn ? styles.bellBtnOn : styles.bellBtnOff, { marginRight: 8 }]}
-          onPress={() => setBellOn(!bellOn)}
+          onPress={() => {
+            const nextVal = !bellOn;
+            setBellOn(nextVal);
+            if (!nextVal) {
+              stopAllAlarms();
+              stopAlarm('new_order');
+            }
+          }}
         >
           <Ionicons
             name={bellOn ? 'notifications' : 'notifications-off-outline'}

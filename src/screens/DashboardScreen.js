@@ -67,6 +67,7 @@ export default function DashboardScreen({ route }) {
   }, [restaurantId]);
 
   const [restaurantName, setRestaurantName] = useState('SmartDine');
+  const [bellOn, setBellOn] = useState(true);
   const [todayOrders, setTodayOrders] = useState([]);
   const [lowStockItems, setLowStockItems] = useState([]);
   const [outOfStockMenuItems, setOutOfStockMenuItems] = useState([]);
@@ -291,7 +292,7 @@ function convertUnitToItemBase(reqQty, reqUnit, baseUnit) {
       // 1. Fetch Restaurant Info & Live Subscription Plan
       const { data: restData, error: restErr } = await supabase
         .from('restaurants')
-        .select('name, subscription_plan, subscription_status')
+        .select('name, subscription_plan, subscription_status, settings')
         .eq('id', restaurantId)
         .maybeSingle();
 
@@ -300,6 +301,9 @@ function convertUnitToItemBase(reqQty, reqUnit, baseUnit) {
       } else if (restData) {
         setIsOffline(false);
         setRestaurantName(restData.name);
+        if (restData.settings?.owner_bell_enabled !== undefined) {
+          setBellOn(restData.settings.owner_bell_enabled !== false);
+        }
         // Synchronize live subscription plan from DB
         if (profile) {
           profile.subscription_plan = restData.subscription_plan || 'starter';
@@ -448,6 +452,23 @@ function convertUnitToItemBase(reqQty, reqUnit, baseUnit) {
     return 'Good Evening';
   };
 
+  const handleToggleBell = async () => {
+    const nextBell = !bellOn;
+    setBellOn(nextBell);
+    if (!nextBell) {
+      stopAllAlarms();
+    }
+    if (restaurantId) {
+      try {
+        const { data: rData } = await supabase.from('restaurants').select('settings').eq('id', restaurantId).single();
+        const newSettings = { ...(rData?.settings || {}), owner_bell_enabled: nextBell };
+        await supabase.from('restaurants').update({ settings: newSettings }).eq('id', restaurantId);
+      } catch (e) {
+        console.log('Error updating bell state:', e);
+      }
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <ScrollView
@@ -475,6 +496,19 @@ function convertUnitToItemBase(reqQty, reqUnit, baseUnit) {
           </View>
 
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            {/* 🔔 Owner Bell Mute/Unmute Toggle */}
+            <TouchableOpacity
+              style={[styles.bellBtn, bellOn ? styles.bellBtnOn : styles.bellBtnOff]}
+              onPress={handleToggleBell}
+              activeOpacity={0.8}
+            >
+              <Ionicons
+                name={bellOn ? 'notifications' : 'notifications-off-outline'}
+                size={18}
+                color={bellOn ? '#ffffff' : '#ef4444'}
+              />
+            </TouchableOpacity>
+
             <View style={styles.roleBadge}>
               <Text style={styles.roleText}>{profile?.role?.toUpperCase() || 'OWNER'}</Text>
             </View>
@@ -1868,4 +1902,7 @@ const styles = StyleSheet.create({
     color: '#4f46e5',
     fontWeight: '800',
   },
+  bellBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  bellBtnOn: { backgroundColor: '#10b981' },
+  bellBtnOff: { backgroundColor: '#fee2e2' },
 });
