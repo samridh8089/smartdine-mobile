@@ -77,6 +77,8 @@ export default function KitchenScreen({ route }) {
   const [lastActionLog, setLastActionLog] = useState('');
   
   const knownNewIds = useRef(new Set());
+  const inFlightBatchIdsRef = useRef(new Set());
+  const optimisticStatusesRef = useRef({});
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
   // Pulse animation for new order alert banner
@@ -149,7 +151,13 @@ export default function KitchenScreen({ route }) {
 
       // Filter out batches whose parent order is already completed/cancelled, OR batch itself is tagged [CANCELLED]
       const rawBatches = data || [];
-      const batches = rawBatches.filter(b =>
+      const batches = rawBatches.map(b => {
+        const opt = optimisticStatusesRef.current[b.id];
+        if (opt) {
+          return { ...b, status: opt };
+        }
+        return b;
+      }).filter(b =>
         b.orders &&
         !['completed', 'cancelled'].includes(b.orders.status) &&
         !b.special_instructions?.includes('[CANCELLED]') &&
@@ -260,6 +268,11 @@ export default function KitchenScreen({ route }) {
 
   const updateBatchStatus = async (batch, newStatus) => {
     const targetId = batch.id;
+    // 1. Synchronous atomic lock: prevent rapid double-taps
+    if (inFlightBatchIdsRef.current.has(targetId)) return;
+    inFlightBatchIdsRef.current.add(targetId);
+    optimisticStatusesRef.current[targetId] = newStatus;
+
     stopAlarm('new_order');
     Vibration.cancel();
 
@@ -276,6 +289,8 @@ export default function KitchenScreen({ route }) {
       const updated = { ...batch, status: 'ready', ready_by: staffName };
       setPreparingOrders(prev => prev.filter(b => b.id !== targetId));
       setReadyOrders(prev => [...prev.filter(b => b.id !== targetId), updated]);
+    } else if (newStatus === 'served' || newStatus === 'completed') {
+      setReadyOrders(prev => prev.filter(b => b.id !== targetId));
     }
 
     setActionLoading(prev => ({ ...prev, [targetId]: true }));
@@ -300,7 +315,7 @@ export default function KitchenScreen({ route }) {
           })
         }).then(r => r.json());
 
-        if (apiRes && apiRes.success) {
+        if (apiRes && (apiRes.success || apiRes.status === 409)) {
           apiSuccess = true;
         }
       } catch (apiErr) {
@@ -331,6 +346,7 @@ export default function KitchenScreen({ route }) {
       await loadOrders();
     } catch (e) {
       console.log('Update batch error:', e?.message);
+      delete optimisticStatusesRef.current[targetId];
       setLastActionLog(`❌ [DB ERROR] ${e?.message || 'Update failed'}`);
       Alert.alert('Action Error', e?.message || 'Failed to update order status');
       setIsOffline(true);
@@ -345,6 +361,10 @@ export default function KitchenScreen({ route }) {
       };
       await savePendingQueue([...pendingQueue, actionItem]);
     } finally {
+      setTimeout(() => {
+        delete optimisticStatusesRef.current[targetId];
+      }, 1000);
+      inFlightBatchIdsRef.current.delete(targetId);
       setActionLoading(prev => ({ ...prev, [targetId]: false }));
     }
   };

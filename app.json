@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "CleverOps",
-    "owner": "ad-city",
+    "owner": "deepak133",
     "slug": "smartdine-mobile-app",
     "version": "2.1.0",
     "orientation": "portrait",
@@ -14,7 +14,7 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.smartdine.mobile",
+      "bundleIdentifier": "cleverops.app.in",
       "infoPlist": {
         "UIBackgroundModes": [
           "audio",
@@ -24,9 +24,9 @@
       }
     },
     "android": {
-      "package": "com.smartdine.mobile",
+      "package": "cleverops.app.in",
       "googleServicesFile": "./google-services.json",
-      "versionCode": 14,
+      "versionCode": 20,
       "permissions": [
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE",
@@ -69,18 +69,13 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "extra": {
-      "eas": {
-        "projectId": "2fb0358d-6e46-4269-996d-0614a98052e1"
-      }
-    },
-    "updates": {
-      "url": "https://u.expo.dev/2fb0358d-6e46-4269-996d-0614a98052e1",
-      "checkAutomatically": "NEVER",
-      "fallbackToCacheTimeout": 0
-    },
     "runtimeVersion": {
       "policy": "appVersion"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "ce3e3736-755b-46c6-ab6d-285377cbe349"
+      }
     }
   }
 }

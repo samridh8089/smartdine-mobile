@@ -161,7 +161,7 @@ export default function SubscriptionScreen({ route, navigation }) {
       }
 
       // 2. Open Official Real Razorpay Gateway (Google Pay, PhonePe, Cards with Bank OTP, Netbanking)
-      const checkoutUrl = `${API_BASE_URL}/checkout?orderId=${orderData.order_id}&amount=${price}&plan=${plan.id}&restaurantId=${restaurantId}&billingInterval=${billingInterval}&keyId=${orderData.key || 'rzp_live_TK1Nbl3mJiENjR'}&restaurantName=${encodeURIComponent(restaurantData?.name || 'Restaurant')}&email=${encodeURIComponent(profile?.email || '')}`;
+      const checkoutUrl = `${API_BASE_URL}/checkout?orderId=${orderData.order_id}&amount=${price}&plan=${plan.id}&restaurantId=${restaurantId}&billingInterval=${billingInterval}&keyId=${orderData.key || 'rzp_live_TK1Nbl3mJiENjR'}&restaurantName=${encodeURIComponent(restaurantData?.name || 'Restaurant')}&email=${encodeURIComponent(profile?.email || '')}&isUpgrade=true`;
       
       await Linking.openURL(checkoutUrl);
     } catch (err) {
