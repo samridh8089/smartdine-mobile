@@ -24,7 +24,7 @@
       }
     },
     "android": {
-      "package": "com.smartdine.mobile",
+      "package": "cleverops.app.in",
       "googleServicesFile": "./google-services.json",
       "versionCode": 15,
       "permissions": [
@@ -54,7 +54,8 @@
           "color": "#059669",
           "defaultChannel": "smartdine-urgent-v3",
           "sounds": [
-            "./assets/order_tune.mp3"
+            "./assets/order_tune.mp3",
+            "./assets/bell.mp3"
           ]
         }
       ],
