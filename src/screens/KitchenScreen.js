@@ -315,7 +315,7 @@ export default function KitchenScreen({ route }) {
           })
         }).then(r => r.json());
 
-        if (apiRes && (apiRes.success || apiRes.status === 409)) {
+        if (apiRes && (apiRes.success || apiRes.status === 409 || apiRes.order || apiRes.batch)) {
           apiSuccess = true;
         }
       } catch (apiErr) {

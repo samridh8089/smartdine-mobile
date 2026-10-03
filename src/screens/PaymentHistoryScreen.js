@@ -24,38 +24,44 @@ export default function PaymentHistoryScreen({ route, navigation }) {
     try {
       setLoading(true);
 
-      // 1. Fetch from payments table if available
-      const { data: payList, error: pErr } = await supabase
-        .from('payments')
-        .select('*')
-        .eq('restaurant_id', restaurantId)
-        .order('created_at', { ascending: false });
+      const { data: rest } = await supabase
+        .from('restaurants')
+        .select('settings, subscription_plan, subscription_status, billing_interval, created_at')
+        .eq('id', restaurantId)
+        .maybeSingle();
 
-      if (payList && payList.length > 0) {
-        setPayments(payList);
-      } else {
-        // Fallback to restaurant settings.payment_history
-        const { data: rest } = await supabase
-          .from('restaurants')
-          .select('settings, subscription_plan, created_at')
-          .eq('id', restaurantId)
-          .maybeSingle();
+      const rawHistory = rest?.settings?.payment_history || [];
+      const plan = (rest?.subscription_plan || 'pro').toLowerCase();
+      const interval = (rest?.billing_interval || 'monthly').toLowerCase();
+      const planPrice = plan === 'premium' ? (interval === 'yearly' ? 9990 : 999) : plan === 'pro' ? (interval === 'yearly' ? 5990 : 599) : 299;
 
-        const history = rest?.settings?.payment_history || [];
-        if (history.length > 0) {
-          setPayments(history);
-        } else if (rest?.subscription_plan) {
-          // Default initial record
-          setPayments([{
-            id: 'init_sub_01',
-            order_id: 'ord_initial_setup',
-            plan_name: rest.subscription_plan,
-            amount: 599,
-            status: 'success',
-            created_at: rest.created_at || new Date().toISOString()
-          }]);
-        }
+      let normalized = rawHistory.map((item, idx) => {
+        const itemPlan = (item.plan_name || item.plan || item.subscription_plan || plan).toLowerCase();
+        const defaultAmt = itemPlan === 'premium' ? 999 : itemPlan === 'pro' ? 599 : 299;
+        const amt = item.amount || item.paid_amount || item.last_amount || defaultAmt;
+        return {
+          id: item.payment_id || item.id || `hist_${idx}`,
+          order_id: item.order_id || item.id || `ORD-${idx + 1}`,
+          plan_name: (item.plan_name || item.plan || item.subscription_plan || plan).toUpperCase(),
+          amount: amt,
+          status: item.status || item.payment_status || 'paid',
+          created_at: item.paid_at || item.created_at || rest?.created_at || new Date().toISOString()
+        };
+      });
+
+      if (normalized.length === 0 && rest?.subscription_status === 'active') {
+        const lastAmt = rest?.settings?.last_amount || planPrice;
+        normalized = [{
+          id: rest?.settings?.last_payment_id || 'pay_live_setup',
+          order_id: rest?.settings?.last_order_id || 'ord_live_setup',
+          plan_name: (rest?.subscription_plan || 'PRO').toUpperCase(),
+          amount: lastAmt,
+          status: 'paid',
+          created_at: rest?.created_at || new Date().toISOString()
+        }];
       }
+
+      setPayments(normalized);
     } catch (e) {
       console.log('[PaymentHistoryScreen] Load error:', e?.message);
     } finally {
@@ -65,7 +71,12 @@ export default function PaymentHistoryScreen({ route, navigation }) {
   }
 
   const renderItem = ({ item }) => {
-    const isSuccess = item.status === 'success' || item.status === 'captured';
+    const isSuccess = item.status === 'success' || item.status === 'captured' || item.status === 'paid';
+    const planName = (item.plan_name || item.plan || 'Pro').toUpperCase();
+    const planKey = planName.toLowerCase();
+    const defaultPrice = planKey === 'premium' ? 999 : planKey === 'pro' ? 599 : 299;
+    const displayAmount = (item.amount && item.amount > 0) ? item.amount : (item.paid_amount || defaultPrice);
+
     return (
       <View style={styles.card}>
         <View style={styles.cardTop}>
@@ -77,11 +88,11 @@ export default function PaymentHistoryScreen({ route, navigation }) {
             />
           </View>
           <View style={{ flex: 1, marginLeft: 10 }}>
-            <Text style={styles.planName}>{(item.plan_name || 'Pro').toUpperCase()} PLAN</Text>
+            <Text style={styles.planName}>{planName} PLAN</Text>
             <Text style={styles.orderId}>Order: {item.order_id || item.id}</Text>
           </View>
           <View style={{ alignItems: 'flex-end' }}>
-            <Text style={styles.amountText}>₹{item.amount || 0}</Text>
+            <Text style={styles.amountText}>₹{displayAmount}</Text>
             <View style={[styles.statusPill, { backgroundColor: isSuccess ? '#ecfdf5' : '#fef2f2' }]}>
               <Text style={[styles.statusText, { color: isSuccess ? '#059669' : '#dc2626' }]}>
                 {item.status ? item.status.toUpperCase() : 'PAID'}

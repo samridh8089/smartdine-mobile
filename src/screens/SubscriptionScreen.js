@@ -143,6 +143,28 @@ export default function SubscriptionScreen({ route, navigation }) {
       Alert.alert('Permission Denied', 'Only the Restaurant Owner can purchase or modify subscription plans.');
       return;
     }
+
+    const PLAN_RANK = { starter: 1, pro: 2, premium: 3, custom: 4 };
+    const curRank = PLAN_RANK[currentPlanId] || 1;
+    const tgtRank = PLAN_RANK[plan.id.toLowerCase()] || 1;
+    const isDowngrade = tgtRank < curRank && currentStatus === 'active';
+
+    if (isDowngrade) {
+      Alert.alert(
+        'Confirm Plan Downgrade',
+        `You are currently on the ${currentPlanId.toUpperCase()} plan. Downgrading to ${plan.name || plan.id.toUpperCase()} may reduce your active table and menu item limits. Proceed with downgrade?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Proceed', onPress: () => executeOrder(plan) }
+        ]
+      );
+      return;
+    }
+
+    executeOrder(plan);
+  };
+
+  const executeOrder = async (plan) => {
     setPurchasingPlanId(plan.id);
     try {
       const price = billingInterval === 'yearly' ? (plan.price_yearly || plan.price_monthly * 10) : plan.price_monthly;
@@ -161,7 +183,7 @@ export default function SubscriptionScreen({ route, navigation }) {
       }
 
       // 2. Open Official Real Razorpay Gateway (Google Pay, PhonePe, Cards with Bank OTP, Netbanking)
-      const checkoutUrl = `${API_BASE_URL}/checkout?orderId=${orderData.order_id}&amount=${price}&plan=${plan.id}&restaurantId=${restaurantId}&billingInterval=${billingInterval}&keyId=${orderData.key || 'rzp_live_TK1Nbl3mJiENjR'}&restaurantName=${encodeURIComponent(restaurantData?.name || 'Restaurant')}&email=${encodeURIComponent(profile?.email || '')}&isUpgrade=true`;
+      const checkoutUrl = `${API_BASE_URL}/checkout?orderId=${orderData.order_id}&amount=${price}&plan=${plan.id}&restaurantId=${restaurantId}&billingInterval=${billingInterval}&keyId=${orderData.key || 'rzp_live_TK1Nbl3mJiENjR'}&restaurantName=${encodeURIComponent(restaurantData?.name || 'Restaurant')}&email=${encodeURIComponent(profile?.email || '')}&isSignup=false&isUpgrade=true`;
       
       await Linking.openURL(checkoutUrl);
     } catch (err) {
@@ -293,8 +315,16 @@ export default function SubscriptionScreen({ route, navigation }) {
               return isStandard && index === self.findIndex(t => t.id.toLowerCase() === pid);
             });
 
+            const PLAN_RANK = { starter: 1, pro: 2, premium: 3, custom: 4 };
+            const currentInterval = (restaurantData?.billing_interval || 'monthly').toLowerCase();
+
             return uniquePlans.map((plan) => {
-              const isCurrent = currentPlanId === plan.id.toLowerCase() && currentStatus === 'active';
+              const targetRank = PLAN_RANK[plan.id.toLowerCase()] || 1;
+              const isCurrent = currentPlanId === plan.id.toLowerCase() && currentStatus === 'active' && billingInterval.toLowerCase() === currentInterval;
+              const isSamePlanDifferentInterval = currentPlanId === plan.id.toLowerCase() && currentStatus === 'active' && billingInterval.toLowerCase() !== currentInterval;
+              const isExpiredCurrentPlan = currentPlanId === plan.id.toLowerCase() && currentStatus !== 'active';
+              const isUpgrade = targetRank > currentRank;
+              const isDowngrade = targetRank < currentRank;
               const isCustom = plan.id.toLowerCase().includes('custom') || plan.plan_type === 'custom';
               const price = billingInterval === 'yearly'
                 ? (plan.price_yearly || plan.price_monthly * 10)
@@ -303,6 +333,19 @@ export default function SubscriptionScreen({ route, navigation }) {
               // Extract clean features array (ignoring __SPECS__)
               const rawFeatures = Array.isArray(plan.features) ? plan.features : [];
               const cleanFeatures = rawFeatures.filter(f => typeof f === 'string' && !f.startsWith('__SPECS__'));
+
+              let buttonText = `Upgrade to ${plan.name || plan.id.toUpperCase()}`;
+              if (isCurrent) {
+                buttonText = 'Current Active Plan';
+              } else if (isExpiredCurrentPlan) {
+                buttonText = `Renew ${plan.name || plan.id.toUpperCase()} Plan`;
+              } else if (isSamePlanDifferentInterval) {
+                buttonText = billingInterval === 'yearly' ? 'Switch to Annual (Save 20%)' : 'Switch to Monthly';
+              } else if (isDowngrade) {
+                buttonText = `Downgrade to ${plan.name || plan.id.toUpperCase()}`;
+              } else if (isUpgrade) {
+                buttonText = `Upgrade to ${plan.name || plan.id.toUpperCase()}`;
+              }
 
             return (
               <View
@@ -378,7 +421,7 @@ export default function SubscriptionScreen({ route, navigation }) {
                       <>
                         <FontAwesome5 name="shield-alt" size={14} color="#ffffff" style={{ marginRight: 8 }} />
                         <Text style={styles.buyBtnText}>
-                          {isCurrent ? 'Active Subscription' : `Upgrade to ${plan.name || plan.id.toUpperCase()}`}
+                          {buttonText}
                         </Text>
                       </>
                     )}

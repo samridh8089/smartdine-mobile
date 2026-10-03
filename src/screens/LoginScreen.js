@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
   ActivityIndicator, KeyboardAvoidingView, Platform,
-  Animated, StatusBar, ScrollView, TouchableWithoutFeedback, Keyboard, Alert, Image, Modal,
+  Animated, StatusBar, ScrollView, TouchableWithoutFeedback, Keyboard, Alert, Image, Modal, Vibration,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -204,8 +204,6 @@ export default function LoginScreen({ navigation }) {
 
     setLoading(true);
     try {
-      await supabase.auth.signOut().catch(() => {});
-
       const { data, error } = await supabase.auth.signInWithPassword({
         email: cleanEmail,
         password: cleanPassword,
@@ -266,7 +264,7 @@ export default function LoginScreen({ navigation }) {
       <View style={styles.splashContainer}>
         <StatusBar barStyle="light-content" backgroundColor={COLORS.primary} />
         <View style={styles.splashLogoCircle}>
-          <Image source={require('../../assets/icon.png')} style={styles.splashLogoImage} resizeMode="contain" />
+          <Image source={require('../../assets/logo.png')} style={{ width: 56, height: 56, resizeMode: 'contain' }} />
         </View>
         <Text style={styles.splashTitle}>CleverOps</Text>
         <Text style={styles.splashSubtitle}>Staff & Operations Portal</Text>
@@ -290,8 +288,8 @@ export default function LoginScreen({ navigation }) {
           >
             {/* Top Brand Header */}
             <View style={styles.brandHeader}>
-              <View style={styles.logoCircle}>
-                <Image source={require('../../assets/icon.png')} style={styles.logoImage} resizeMode="contain" />
+              <View style={[styles.logoCircle, { backgroundColor: 'transparent', elevation: 0, shadowOpacity: 0 }]}>
+                <Image source={require('../../assets/logo.png')} style={{ width: 64, height: 64, resizeMode: 'contain' }} />
               </View>
               <Text style={styles.appName}>CleverOps</Text>
               <Text style={styles.appTagline}>Smart Restaurant Operations</Text>
@@ -373,8 +371,8 @@ export default function LoginScreen({ navigation }) {
                     <Text style={{ fontSize: 11, fontWeight: '700', color: COLORS.primary }}>Forgot Password?</Text>
                   </TouchableOpacity>
                 </View>
-                <View style={styles.inputWrapper}>
-                  <Ionicons name="lock-closed-outline" size={20} color="#94a3b8" style={styles.inputIcon} />
+                <View style={[styles.inputWrapper, !!errorMsg && { borderColor: '#ef4444', borderWidth: 1.5 }]}>
+                  <Ionicons name="lock-closed-outline" size={20} color={errorMsg ? '#ef4444' : '#94a3b8'} style={styles.inputIcon} />
                   <TextInput
                     style={styles.input}
                     placeholder="••••••••"
@@ -396,6 +394,32 @@ export default function LoginScreen({ navigation }) {
                 </View>
               </View>
 
+              {/* Prominent Error Banner above Sign In Button for immediate tactile feedback */}
+              {!!errorMsg && (
+                <View style={{
+                  backgroundColor: '#fef2f2',
+                  borderWidth: 1.5,
+                  borderColor: '#ef4444',
+                  borderRadius: 12,
+                  paddingVertical: 10,
+                  paddingHorizontal: 12,
+                  marginBottom: 14,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 8,
+                  shadowColor: '#ef4444',
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowOpacity: 0.15,
+                  shadowRadius: 4,
+                  elevation: 2,
+                }}>
+                  <Ionicons name="alert-circle" size={20} color="#dc2626" />
+                  <Text style={{ flex: 1, color: '#b91c1c', fontSize: 13, fontWeight: '700', lineHeight: 18 }}>
+                    {errorMsg}
+                  </Text>
+                </View>
+              )}
+
               {/* Sign In Button */}
               <TouchableOpacity
                 style={[styles.loginBtn, loading && { opacity: 0.7 }]}
@@ -416,11 +440,7 @@ export default function LoginScreen({ navigation }) {
               {/* Create Restaurant Account (Owner Signup) */}
               <TouchableOpacity
                 style={styles.signupBtn}
-                onPress={async () => {
-                  try {
-                    await supabase.auth.signOut().catch(() => {});
-                    await AsyncStorage.clear().catch(() => {});
-                  } catch (e) {}
+                onPress={() => {
                   navigation.navigate('OwnerSignup');
                 }}
                 activeOpacity={0.8}
