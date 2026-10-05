@@ -33,25 +33,25 @@ export async function setupNotificationChannel() {
     };
 
     const channels = [
+      { id: 'smartdine_kitchen_v3', name: 'CleverOps Kitchen Orders' },
+      { id: 'smartdine_waiter_v3', name: 'CleverOps Waiter Calls' },
+      { id: 'smartdine_owner_v3', name: 'CleverOps Owner Alerts' },
       { id: 'smartdine_kitchen', name: 'CleverOps Kitchen Orders' },
       { id: 'smartdine_kitchen_v2', name: 'CleverOps Kitchen Orders v2' },
       { id: 'smartdine_waiter', name: 'CleverOps Waiter Calls' },
       { id: 'smartdine_waiter_v2', name: 'CleverOps Waiter Calls v2' },
       { id: 'smartdine_owner', name: 'CleverOps Owner Alerts' },
       { id: 'smartdine_owner_v2', name: 'CleverOps Owner Alerts v2' },
-      { id: CONFIG.NOTIFICATION_CHANNEL_ID || 'smartdine-urgent-v3', name: CONFIG.NOTIFICATION_CHANNEL_NAME || 'CleverOps Staff Alerts' },
+      { id: CONFIG.NOTIFICATION_CHANNEL_ID || 'smartdine_owner_v3', name: CONFIG.NOTIFICATION_CHANNEL_NAME || 'CleverOps Staff Alerts' },
       { id: 'smartdine-urgent-channel', name: 'CleverOps Urgent Channel' },
     ];
 
     for (const ch of channels) {
       try {
-        const existing = await Notifications.getNotificationChannelAsync(ch.id);
-        if (!existing) {
-          await Notifications.setNotificationChannelAsync(ch.id, {
-            ...channelConfig,
-            name: ch.name,
-          });
-        }
+        await Notifications.setNotificationChannelAsync(ch.id, {
+          ...channelConfig,
+          name: ch.name,
+        });
       } catch (e) {
         console.log(`[NotificationManager] Channel creation warning for ${ch.id}:`, e?.message);
       }
@@ -73,7 +73,7 @@ export async function registerForPushNotificationsAsync(userId) {
       return null;
     }
 
-    const projectId = CONFIG.PROJECT_ID || '2fb0358d-6e46-4269-996d-0614a98052e1';
+    const projectId = CONFIG.PROJECT_ID || 'ce3e3736-755b-46c6-ab6d-285377cbe349';
     let tokenData = null;
     try {
       tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
@@ -126,12 +126,14 @@ export async function unregisterPushToken(userId) {
 
 export async function sendLocalNotification(title, body, channelId = CONFIG.NOTIFICATION_CHANNEL_ID) {
   try {
+    const targetChannel = channelId || CONFIG.NOTIFICATION_CHANNEL_ID || 'smartdine_owner_v3';
     await Notifications.scheduleNotificationAsync({
       content: {
         title,
         body,
         sound: 'order_tune',
         priority: Notifications.AndroidNotificationPriority.MAX,
+        channelId: targetChannel,
         data: { timestamp: Date.now() },
       },
       trigger: null, // Immediate delivery

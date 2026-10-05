@@ -6,9 +6,9 @@ export const CONFIG = {
   SUPABASE_URL: process.env.EXPO_PUBLIC_SUPABASE_URL || extra.EXPO_PUBLIC_SUPABASE_URL || 'https://tiuwfhkrjvtkshebdwlp.supabase.co',
   SUPABASE_ANON_KEY: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || extra.EXPO_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_YhLxIyNN7tsS2ixSnGfRUw_TF4EsRf-',
   API_BASE_URL: process.env.EXPO_PUBLIC_API_URL || extra.EXPO_PUBLIC_API_URL || 'https://www.cleverops.in',
-  NOTIFICATION_CHANNEL_ID: 'smartdine-urgent-v3',
-  NOTIFICATION_CHANNEL_NAME: 'Urgent Orders & Calls',
-  PROJECT_ID: extra.eas?.projectId || '2fb0358d-6e46-4269-996d-0614a98052e1',
+  NOTIFICATION_CHANNEL_ID: 'smartdine_owner_v3',
+  NOTIFICATION_CHANNEL_NAME: 'CleverOps Staff Alerts',
+  PROJECT_ID: extra.eas?.projectId || 'ce3e3736-755b-46c6-ab6d-285377cbe349',
   POLL_INTERVAL_MS: 6000,
   HEARTBEAT_INTERVAL_MS: 30000,
 };

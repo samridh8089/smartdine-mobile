@@ -3,7 +3,7 @@
     "name": "CleverOps",
     "owner": "deepak133",
     "slug": "smartdine-mobile-app",
-    "version": "2.1.2",
+    "version": "2.1.3",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -26,7 +26,7 @@
     "android": {
       "package": "cleverops.app.in",
       "googleServicesFile": "./google-services.json",
-      "versionCode": 22,
+      "versionCode": 23,
       "permissions": [
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE",
@@ -61,7 +61,7 @@
         {
           "icon": "./assets/notification-icon.png",
           "color": "#059669",
-          "defaultChannel": "smartdine-urgent-v3",
+          "defaultChannel": "smartdine_owner_v3",
           "sounds": [
             "./assets/order_tune.mp3"
           ]

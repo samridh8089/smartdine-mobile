@@ -101,7 +101,20 @@ export default function App() {
     // 2. Safe setup of notification channels on app startup & token refresh listener
     let tokenSubscription = null;
     try {
-      setupNotificationChannel().catch(e => console.log('[App] Notification setup warning:', e?.message));
+      setupNotificationChannel()
+        .then(async () => {
+          try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user?.id) {
+              const { registerForPushNotificationsAsync } = await import('./src/lib/notifications');
+              await registerForPushNotificationsAsync(user.id);
+            }
+          } catch (regErr) {
+            console.log('[App] Initial push token registration warning:', regErr?.message);
+          }
+        })
+        .catch(e => console.log('[App] Notification setup warning:', e?.message));
+
       if (typeof Notifications?.addPushTokenListener === 'function') {
         tokenSubscription = Notifications.addPushTokenListener(async ({ data: newToken }) => {
           try {
@@ -262,6 +275,12 @@ export default function App() {
         }
       } else if (event === 'SIGNED_IN') {
         setupGlobalRealtimeListener();
+        supabase.auth.getUser().then(async ({ data: { user } }) => {
+          if (user?.id) {
+            const { registerForPushNotificationsAsync } = await import('./src/lib/notifications');
+            await registerForPushNotificationsAsync(user.id);
+          }
+        }).catch(() => {});
       }
     });
 
