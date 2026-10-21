@@ -18,7 +18,6 @@ import { unregisterPushToken, sendLocalNotification } from '../lib/notifications
 import {
   COLORS, FONTS, RADIUS, SHADOWS, timeAgo, formatCurrency,
 } from '../lib/theme';
-import { formatExactTimestamp } from '../lib/timestamp';
 
 const CANCEL_REASONS = [
   'Item Out of Stock',
@@ -36,30 +35,6 @@ export default function KitchenScreen({ route }) {
   const [restaurantId, setRestaurantId] = useState(
     profile?.restaurant_id || profile?.restaurants?.id || null
   );
-
-  useEffect(() => {
-    async function fetchMissingRestaurantId() {
-      if (!restaurantId) {
-        try {
-          const { data: { user } } = await supabase.auth.getUser();
-          if (user) {
-            const { data: p } = await supabase
-              .from('profiles')
-              .select('restaurant_id')
-              .eq('id', user.id)
-              .maybeSingle();
-            if (p?.restaurant_id) {
-              setRestaurantId(p.restaurant_id);
-            }
-          }
-        } catch (e) {
-          console.log('KDS restaurant_id fetch error:', e?.message);
-        }
-      }
-    }
-    fetchMissingRestaurantId();
-  }, [restaurantId]);
-
   const [activeTab, setActiveTab] = useState('new'); // 'new' | 'preparing' | 'ready'
   const [newOrders, setNewOrders] = useState([]);
   const [preparingOrders, setPreparingOrders] = useState([]);
@@ -75,54 +50,21 @@ export default function KitchenScreen({ route }) {
   const [isOffline, setIsOffline] = useState(false);
   const [pendingQueue, setPendingQueue] = useState([]);
   const [lastActionLog, setLastActionLog] = useState('');
-  
+
+  // ─── 2. useRef Declarations ───────────────────────────────────────────
   const knownNewIds = useRef(new Set());
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  const optimisticBatches = useRef(new Map()); // Map<batchId, { status: string, staffName?: string, timestamp: number }>
 
-  // Pulse animation for new order alert banner
-  useEffect(() => {
-    if (hasNewOrder) {
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulseAnim, { toValue: 1.03, duration: 600, useNativeDriver: true }),
-          Animated.timing(pulseAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
-        ])
-      ).start();
-    } else {
-      pulseAnim.setValue(1);
-    }
-  }, [hasNewOrder]);
-
-  // Load offline queue on init & purge stale broken items
-  useEffect(() => {
-    async function loadPendingQueue() {
-      try {
-        const stored = await AsyncStorage.getItem(PENDING_QUEUE_STORAGE_KEY);
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            // Purge old broken items from previous app versions that try to send status = 'cancelled'
-            const sanitized = parsed.filter(item => item.newStatus !== 'cancelled');
-            setPendingQueue(sanitized);
-            await AsyncStorage.setItem(PENDING_QUEUE_STORAGE_KEY, JSON.stringify(sanitized));
-          }
-        }
-      } catch (e) {
-        console.log('[KDS] Pending queue load error:', e?.message);
-      }
-    }
-    loadPendingQueue();
-  }, []);
-
-  // Save offline queue whenever it changes
-  const savePendingQueue = async (queue) => {
+  // ─── 3. useCallback Declarations ──────────────────────────────────────
+  const savePendingQueue = useCallback(async (queue) => {
     setPendingQueue(queue);
     try {
       await AsyncStorage.setItem(PENDING_QUEUE_STORAGE_KEY, JSON.stringify(queue));
     } catch (e) {
       console.log('[KDS] Save pending queue error:', e?.message);
     }
-  };
+  }, []);
 
   const loadOrders = useCallback(async () => {
     if (!restaurantId) {
@@ -149,12 +91,43 @@ export default function KitchenScreen({ route }) {
 
       // Filter out batches whose parent order is already completed/cancelled, OR batch itself is tagged [CANCELLED]
       const rawBatches = data || [];
-      const batches = rawBatches.filter(b =>
-        b.orders &&
-        !['completed', 'cancelled'].includes(b.orders.status) &&
-        !b.special_instructions?.includes('[CANCELLED]') &&
-        b.status !== 'cancelled'
-      );
+      const now = Date.now();
+      const STATUS_RANK = { new: 0, pending: 0, accepted: 1, preparing: 2, ready: 3, served: 4, completed: 5, cancelled: 99 };
+
+      const batches = rawBatches
+        .filter(b =>
+          b.orders &&
+          !['completed', 'cancelled'].includes(b.orders.status) &&
+          !b.special_instructions?.includes('[CANCELLED]') &&
+          b.status !== 'cancelled'
+        )
+        .map(b => {
+          const opt = optimisticBatches.current.get(b.id);
+          if (opt) {
+            if (now - opt.timestamp > 15000) {
+              optimisticBatches.current.delete(b.id);
+            } else {
+              if (opt.status === 'cancelled') {
+                return null;
+              }
+              if ((STATUS_RANK[b.status] || 0) >= (STATUS_RANK[opt.status] || 0)) {
+                optimisticBatches.current.delete(b.id);
+              } else {
+                return {
+                  ...b,
+                  status: opt.status,
+                  accepted_by: opt.staffName || b.accepted_by,
+                  preparing_by: opt.status === 'preparing' ? (opt.staffName || b.preparing_by) : b.preparing_by,
+                  ready_by: opt.status === 'ready' ? (opt.staffName || b.ready_by) : b.ready_by,
+                };
+              }
+            }
+          }
+          return b;
+        })
+        .filter(Boolean)
+        .filter(b => !['served', 'completed', 'cancelled'].includes(b.status));
+
       const newB = batches.filter(b => b.status === 'new' || b.status === 'pending');
       const prepB = batches.filter(b => ['accepted', 'preparing'].includes(b.status));
       const readyB = batches.filter(b => b.status === 'ready');
@@ -193,7 +166,6 @@ export default function KitchenScreen({ route }) {
   const flushPendingQueue = useCallback(async () => {
     if (pendingQueue.length === 0) return;
     console.log(`[KDS] Retrying ${pendingQueue.length} queued offline actions...`);
-    const remaining = [];
     for (const item of pendingQueue) {
       try {
         if (item.type === 'status_update') {
@@ -214,12 +186,69 @@ export default function KitchenScreen({ route }) {
         }
       } catch (err) {
         console.log('[KDS] Cleared unresolvable pending action:', err?.message);
-        // Do not keep unresolvable constraint errors stuck in retry loop
       }
     }
     await savePendingQueue([]);
     await loadOrders();
-  }, [pendingQueue, loadOrders]);
+  }, [pendingQueue, loadOrders, savePendingQueue]);
+
+  // ─── 4. useEffect Declarations ────────────────────────────────────────
+  useEffect(() => {
+    async function fetchMissingRestaurantId() {
+      if (!restaurantId) {
+        try {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (user) {
+            const { data: p } = await supabase
+              .from('profiles')
+              .select('restaurant_id')
+              .eq('id', user.id)
+              .maybeSingle();
+            if (p?.restaurant_id) {
+              setRestaurantId(p.restaurant_id);
+            }
+          }
+        } catch (e) {
+          console.log('KDS restaurant_id fetch error:', e?.message);
+        }
+      }
+    }
+    fetchMissingRestaurantId();
+  }, [restaurantId]);
+
+  // Pulse animation for new order alert banner
+  useEffect(() => {
+    if (hasNewOrder) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 1.03, duration: 600, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
+        ])
+      ).start();
+    } else {
+      pulseAnim.setValue(1);
+    }
+  }, [hasNewOrder]);
+
+  // Load offline queue on init & purge stale broken items
+  useEffect(() => {
+    async function loadPendingQueue() {
+      try {
+        const stored = await AsyncStorage.getItem(PENDING_QUEUE_STORAGE_KEY);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const sanitized = parsed.filter(item => item.newStatus !== 'cancelled');
+            setPendingQueue(sanitized);
+            await AsyncStorage.setItem(PENDING_QUEUE_STORAGE_KEY, JSON.stringify(sanitized));
+          }
+        }
+      } catch (e) {
+        console.log('[KDS] Pending queue load error:', e?.message);
+      }
+    }
+    loadPendingQueue();
+  }, []);
 
   useEffect(() => {
     if (!isOffline && pendingQueue.length > 0) {
@@ -263,16 +292,34 @@ export default function KitchenScreen({ route }) {
     Vibration.cancel();
 
     const staffName = profile?.full_name || 'Kitchen';
-    setLastActionLog(`⏳ [TAP REGISTERED] ${newStatus.toUpperCase()} batch #${targetId.slice(0, 6)}...`);
+    const nowIso = new Date().toISOString();
 
-    // Optimistic UI updates
+    // 1. Record optimistic update with timestamp to prevent stale polling rollback
+    optimisticBatches.current.set(targetId, {
+      status: newStatus,
+      staffName,
+      timestamp: Date.now()
+    });
+
+    // 2. Instant 0ms Optimistic UI updates
     if (newStatus === 'accepted' || newStatus === 'preparing') {
-      const updated = { ...batch, status: newStatus, accepted_by: staffName };
+      const updated = {
+        ...batch,
+        status: newStatus,
+        accepted_by: staffName,
+        accepted_at: nowIso,
+        preparing_by: newStatus === 'preparing' ? staffName : batch.preparing_by,
+        preparing_at: newStatus === 'preparing' ? nowIso : batch.preparing_at
+      };
       setNewOrders(prev => prev.filter(b => b.id !== targetId));
       setPreparingOrders(prev => [...prev.filter(b => b.id !== targetId), updated]);
-      // Keep current active tab so UI remains steady for staff
     } else if (newStatus === 'ready') {
-      const updated = { ...batch, status: 'ready', ready_by: staffName };
+      const updated = {
+        ...batch,
+        status: 'ready',
+        ready_by: staffName,
+        ready_at: nowIso
+      };
       setPreparingOrders(prev => prev.filter(b => b.id !== targetId));
       setReadyOrders(prev => [...prev.filter(b => b.id !== targetId), updated]);
     } else if (newStatus === 'served' || newStatus === 'completed') {
@@ -280,15 +327,16 @@ export default function KitchenScreen({ route }) {
       setPreparingOrders(prev => prev.filter(b => b.id !== targetId));
     }
 
-    try {
-      const now = new Date().toISOString();
-      const updates = { status: newStatus, updated_at: now };
-      if (newStatus === 'accepted') { updates.accepted_by = staffName; updates.accepted_at = now; }
-      if (newStatus === 'preparing') { updates.preparing_by = staffName; updates.preparing_at = now; }
-      if (newStatus === 'ready') { updates.ready_by = staffName; updates.ready_at = now; }
-      if (newStatus === 'served') { updates.served_by = staffName; updates.served_at = now; }
+    setLastActionLog(`⚡ [${newStatus.toUpperCase()}] Batch #${targetId.slice(0, 6)}`);
 
-      // 1. Call authoritative backend API first to run inventoryEngine transitions
+    // 3. Fire-and-forget background worker to sync authoritative backend & database
+    (async () => {
+      const updates = { status: newStatus, updated_at: nowIso };
+      if (newStatus === 'accepted') { updates.accepted_by = staffName; updates.accepted_at = nowIso; }
+      if (newStatus === 'preparing') { updates.preparing_by = staffName; updates.preparing_at = nowIso; }
+      if (newStatus === 'ready') { updates.ready_by = staffName; updates.ready_at = nowIso; }
+      if (newStatus === 'served') { updates.served_by = staffName; updates.served_at = nowIso; }
+
       let apiSuccess = false;
       try {
         const apiRes = await fetchWithAuth('/api/staff/update-order-status', {
@@ -308,46 +356,40 @@ export default function KitchenScreen({ route }) {
         console.log('[KitchenScreen] Backend API update failed, falling back:', apiErr?.message);
       }
 
-      // 2. Fallback to direct client updates if offline or API unreachable
+      // 4. Fallback to direct client updates if offline or API unreachable
       if (!apiSuccess) {
-        let { error: batchErr } = await supabase.from('order_batches').update(updates).eq('id', targetId);
-        if (batchErr) throw new Error(batchErr.message || 'Failed to update order batch');
-        if (batch.order_id) {
-          await supabase.from('orders').update({ status: newStatus }).eq('id', batch.order_id);
-        }
-        if (['served', 'completed', 'ready'].includes(newStatus)) {
-          try {
-            await supabase
-              .from('inventory_reservations')
-              .update({ status: 'CONSUMED', updated_at: now })
-              .or(`batch_id.eq.${targetId},order_id.eq.${batch.order_id}`)
-              .eq('status', 'ACTIVE');
-          } catch (resErr) {
-            console.log('[KitchenScreen] Reservation update notice:', resErr?.message);
+        try {
+          let { error: batchErr } = await supabase.from('order_batches').update(updates).eq('id', targetId);
+          if (batchErr) throw batchErr;
+          if (batch.order_id) {
+            await supabase.from('orders').update({ status: newStatus }).eq('id', batch.order_id);
           }
+          if (['served', 'completed', 'ready'].includes(newStatus)) {
+            try {
+              await supabase
+                .from('inventory_reservations')
+                .update({ status: 'CONSUMED', updated_at: nowIso })
+                .or(`batch_id.eq.${targetId},order_id.eq.${batch.order_id}`)
+                .eq('status', 'ACTIVE');
+            } catch (resErr) {
+              console.log('[KitchenScreen] Reservation update notice:', resErr?.message);
+            }
+          }
+        } catch (dbErr) {
+          console.log('[KitchenScreen] Direct update error (queueing offline):', dbErr?.message);
+          setIsOffline(true);
+          const actionItem = {
+            type: 'status_update',
+            targetId,
+            orderId: batch.order_id,
+            newStatus,
+            staffName,
+            timestamp: Date.now(),
+          };
+          savePendingQueue([...pendingQueue, actionItem]);
         }
       }
-      setIsOffline(false);
-      setLastActionLog(`✅ [SUCCESS] Batch #${targetId.slice(0, 6)} updated to ${newStatus.toUpperCase()}`);
-      loadOrders().catch(() => {});
-    } catch (e) {
-      console.log('Update batch error:', e?.message);
-      setLastActionLog(`❌ [DB ERROR] ${e?.message || 'Update failed'}`);
-      Alert.alert('Action Error', e?.message || 'Failed to update order status');
-      setIsOffline(true);
-      // Queue action for retry
-      const actionItem = {
-        type: 'status_update',
-        targetId,
-        orderId: batch.order_id,
-        newStatus,
-        staffName,
-        timestamp: Date.now(),
-      };
-      await savePendingQueue([...pendingQueue, actionItem]);
-    } finally {
-      setActionLoading(prev => ({ ...prev, [targetId]: false }));
-    }
+    })();
   };
 
   const cancelBatch = async (targetOverride, reasonOverride) => {
@@ -359,159 +401,130 @@ export default function KitchenScreen({ route }) {
 
     stopAlarm('new_order');
     Vibration.cancel();
-    setLastActionLog(`⏳ [TAP REGISTERED] DECLINE batch #${targetId.slice(0, 6)}...`);
+    setLastActionLog(`⚡ [CANCELLED] Batch #${targetId.slice(0, 6)}`);
 
-    // Optimistic remove from local list instantly
+    // 1. Record optimistic cancellation
+    optimisticBatches.current.set(targetId, {
+      status: 'cancelled',
+      timestamp: Date.now()
+    });
+
+    // 2. Instant 0ms Optimistic remove from local lists
     setNewOrders(prev => prev.filter(b => b.id !== targetId));
     setPreparingOrders(prev => prev.filter(b => b.id !== targetId));
     setReadyOrders(prev => prev.filter(b => b.id !== targetId));
     setShowCancelModal(false);
     setCancelTarget(null);
 
-    setActionLoading(prev => ({ ...prev, [targetId]: true }));
-    try {
-      // 1. Mark batch as cancelled with [CANCELLED] tag in special_instructions & status = 'completed'
-      const cancelTag = `[CANCELLED] ${finalReason}`;
-      const { error: cancelErr } = await supabase.from('order_batches').update({
-        special_instructions: cancelTag,
-        status: 'completed'
-      }).eq('id', targetId);
+    // 3. Fire-and-forget background worker to sync database and parent order
+    (async () => {
+      try {
+        const cancelTag = `[CANCELLED] ${finalReason}`;
+        const { error: cancelErr } = await supabase.from('order_batches').update({
+          special_instructions: cancelTag,
+          status: 'completed'
+        }).eq('id', targetId);
 
-      if (cancelErr) {
-        Alert.alert('Decline Order Error', cancelErr.message);
-        throw cancelErr;
-      }
+        if (cancelErr) throw cancelErr;
 
-      // 2. Mark order_items in this batch with [CANCELLED] tag in notes
-      await supabase.from('order_items').update({
-        notes: cancelTag
-      }).eq('batch_id', targetId);
+        await supabase.from('order_items').update({
+          notes: cancelTag
+        }).eq('batch_id', targetId);
 
-      if (orderId) {
-        // 3. Fetch all batches + parent order (with status, gst rate, discount) for correct recalculation
-        const { data: allBatches } = await supabase
-          .from('order_batches')
-          .select('id, status, special_instructions')
-          .eq('order_id', orderId);
-
-        // FIX — fetch parent order to read terminal status and actual GST rate
-        const { data: parentOrd } = await supabase
-          .from('orders')
-          .select('payment_status, total, subtotal, gst, status, discount_amount')
-          .eq('id', orderId)
-          .single();
-
-        const activeRemaining = (allBatches || []).filter(b =>
-          b.id !== targetId &&
-          !b.special_instructions?.includes('[CANCELLED]')
-        );
-
-        if (activeRemaining.length === 0 && !['served', 'completed'].includes(parentOrd?.status)) {
-          // ALL batches are cancelled AND order is not already terminal -> Cancel parent order
-          await supabase.from('orders').update({
-            status: 'cancelled',
-            cancellation_reason: finalReason,
-            cancelled_at: new Date().toISOString(),
-            cancelled_by: profile?.full_name || 'Kitchen',
-          }).eq('id', orderId);
-
-          // P1-07: Table status lifecycle sync — release table upon cancellation
-          const cancelTableId = parentOrd?.table_id || target.orders?.table_id;
-          if (cancelTableId) {
-            try {
-              fetchWithAuth('/api/staff/update-order-status', {
-                method: 'POST',
-                body: JSON.stringify({
-                  orderId,
-                  newStatus: 'cancelled',
-                  staffName: profile?.full_name || 'Kitchen',
-                  cancellationReason: finalReason
-                })
-              }).catch(() => {});
-            } catch (_) {}
-          }
-        } else {
-          // Other batches are active, OR the order is already served/completed.
-          // FIX — ORDER STATUS REGRESSION:
-          // If the order is already in a terminal state (served/completed), NEVER overwrite it.
-          // Cancelling a later batch is batch-scoped and must not mutate the historical order lifecycle.
-          const terminalStates = ['served', 'completed'];
-          let parentStatus;
-          if (terminalStates.includes(parentOrd?.status)) {
-            // Preserve the existing terminal status — do not re-derive from batch list
-            parentStatus = parentOrd.status;
-          } else {
-            // Derive status from remaining active batches
-            parentStatus = 'new';
-            if (activeRemaining.some(b => b.status === 'served')) parentStatus = 'served';
-            else if (activeRemaining.some(b => b.status === 'ready')) parentStatus = 'ready';
-            else if (activeRemaining.some(b => b.status === 'preparing')) parentStatus = 'preparing';
-            else if (activeRemaining.some(b => b.status === 'accepted')) parentStatus = 'accepted';
-          }
-
-          // Recalculate active items subtotal & total
-          const activeBatchIds = new Set(activeRemaining.map(b => b.id));
-          const { data: allItems } = await supabase
-            .from('order_items')
-            .select('price, quantity, batch_id, notes')
+        if (orderId) {
+          const { data: allBatches } = await supabase
+            .from('order_batches')
+            .select('id, status, special_instructions')
             .eq('order_id', orderId);
 
-          const validItems = (allItems || []).filter(i =>
-            activeBatchIds.has(i.batch_id) && !i.notes?.includes('[CANCELLED]')
+          const { data: parentOrd } = await supabase
+            .from('orders')
+            .select('payment_status, total, subtotal, gst, status, discount_amount, table_id')
+            .eq('id', orderId)
+            .single();
+
+          const activeRemaining = (allBatches || []).filter(b =>
+            b.id !== targetId &&
+            !b.special_instructions?.includes('[CANCELLED]')
           );
 
-          const newSubtotal = validItems.reduce((sum, i) => sum + (Number(i.price) * Number(i.quantity)), 0);
+          if (activeRemaining.length === 0 && !['served', 'completed'].includes(parentOrd?.status)) {
+            await supabase.from('orders').update({
+              status: 'cancelled',
+              cancellation_reason: finalReason,
+              cancelled_at: new Date().toISOString(),
+              cancelled_by: profile?.full_name || 'Kitchen',
+            }).eq('id', orderId);
 
-          // FIX — GST RATE: use the stored GST rate from parent order instead of hardcoded 0.05.
-          // This keeps the mobile cancel path consistent with the canonical billing engine.
-          const storedGstRate = (parentOrd?.gst > 0 && parentOrd?.subtotal > 0)
-            ? parentOrd.gst / parentOrd.subtotal
-            : 0;
-          const newGst = parseFloat((newSubtotal * storedGstRate).toFixed(2));
-          const newTotal = parseFloat((newSubtotal + newGst).toFixed(2));
+            fetchWithAuth('/api/staff/update-order-status', {
+              method: 'POST',
+              body: JSON.stringify({
+                orderId,
+                newStatus: 'cancelled',
+                staffName: profile?.full_name || 'Kitchen',
+                cancellationReason: finalReason
+              })
+            }).catch(() => {});
+          } else {
+            const terminalStates = ['served', 'completed'];
+            let parentStatus = terminalStates.includes(parentOrd?.status) ? parentOrd.status : 'new';
+            if (!terminalStates.includes(parentOrd?.status)) {
+              if (activeRemaining.some(b => b.status === 'served')) parentStatus = 'served';
+              else if (activeRemaining.some(b => b.status === 'ready')) parentStatus = 'ready';
+              else if (activeRemaining.some(b => b.status === 'preparing')) parentStatus = 'preparing';
+              else if (activeRemaining.some(b => b.status === 'accepted')) parentStatus = 'accepted';
+            }
 
-          // FIX — PROMO ISOLATION:
-          // Subtract only the cancelled batch's persisted promo from the order discount_amount.
-          // The active batches' promo values must remain untouched in their own special_instructions.
-          // Do NOT zero out all discounts; only remove the cancelled batch's contribution.
-          const cancelledBatch = (allBatches || []).find(b => b.id === targetId);
-          const cancelledBatchPromoMatch = cancelledBatch?.special_instructions?.match(/-\s*₹\s*(\d+(?:\.\d+)?)/);
-          const cancelledBatchPromoAmt = cancelledBatchPromoMatch ? parseFloat(cancelledBatchPromoMatch[1]) : 0;
-          const currentDiscountAmount = Number(parentOrd?.discount_amount || 0);
-          const newDiscountAmount = Math.max(0, parseFloat((currentDiscountAmount - cancelledBatchPromoAmt).toFixed(2)));
+            const activeBatchIds = new Set(activeRemaining.map(b => b.id));
+            const { data: allItems } = await supabase
+              .from('order_items')
+              .select('price, quantity, batch_id, notes')
+              .eq('order_id', orderId);
 
-          const isPaid = parentOrd?.payment_status === 'paid';
+            const validItems = (allItems || []).filter(i =>
+              activeBatchIds.has(i.batch_id) && !i.notes?.includes('[CANCELLED]')
+            );
 
-          await supabase.from('orders').update({
-            status: parentStatus,
-            subtotal: isPaid ? parentOrd.subtotal : newSubtotal,
-            gst: isPaid ? (parentOrd.gst || 0) : newGst,
-            total: isPaid ? parentOrd.total : newTotal,
-            discount_amount: isPaid ? currentDiscountAmount : newDiscountAmount,
-            cancelled_by: null,
-            cancellation_reason: null,
-            cancelled_at: null
-          }).eq('id', orderId);
+            const newSubtotal = validItems.reduce((sum, i) => sum + (Number(i.price) * Number(i.quantity)), 0);
+            const storedGstRate = (parentOrd?.gst > 0 && parentOrd?.subtotal > 0)
+              ? parentOrd.gst / parentOrd.subtotal
+              : 0;
+            const newGst = parseFloat((newSubtotal * storedGstRate).toFixed(2));
+            const newTotal = parseFloat((newSubtotal + newGst).toFixed(2));
+
+            const cancelledBatch = (allBatches || []).find(b => b.id === targetId);
+            const cancelledBatchPromoMatch = cancelledBatch?.special_instructions?.match(/-\s*₹\s*(\d+(?:\.\d+)?)/);
+            const cancelledBatchPromoAmt = cancelledBatchPromoMatch ? parseFloat(cancelledBatchPromoMatch[1]) : 0;
+            const currentDiscountAmount = Number(parentOrd?.discount_amount || 0);
+            const newDiscountAmount = Math.max(0, parseFloat((currentDiscountAmount - cancelledBatchPromoAmt).toFixed(2)));
+
+            const isPaid = parentOrd?.payment_status === 'paid';
+
+            await supabase.from('orders').update({
+              status: parentStatus,
+              subtotal: isPaid ? parentOrd.subtotal : newSubtotal,
+              gst: isPaid ? (parentOrd.gst || 0) : newGst,
+              total: isPaid ? parentOrd.total : newTotal,
+              discount_amount: isPaid ? currentDiscountAmount : newDiscountAmount,
+              cancelled_by: null,
+              cancellation_reason: null,
+              cancelled_at: null
+            }).eq('id', orderId);
+          }
         }
+      } catch (e) {
+        console.log('Cancel batch error (queueing for retry):', e?.message);
+        setIsOffline(true);
+        const actionItem = {
+          type: 'cancel_batch',
+          targetId,
+          orderId,
+          reason: finalReason,
+          timestamp: Date.now(),
+        };
+        savePendingQueue([...pendingQueue, actionItem]);
       }
-
-      setCancelReason('');
-      setIsOffline(false);
-      await loadOrders();
-    } catch (e) {
-      console.log('Cancel batch error (queueing for retry):', e?.message);
-      setIsOffline(true);
-      const actionItem = {
-        type: 'cancel_batch',
-        targetId,
-        orderId,
-        reason: finalReason,
-        timestamp: Date.now(),
-      };
-      await savePendingQueue([...pendingQueue, actionItem]);
-    } finally {
-      setActionLoading(prev => ({ ...prev, [targetId]: false }));
-    }
+    })();
   };
 
   const activeBatches =
@@ -594,15 +607,16 @@ export default function KitchenScreen({ route }) {
           );
         })()}
 
-        {/* Staff & Exact Lifecycle Timeline */}
-        <View style={{ marginTop: 4, paddingTop: 4, borderTopWidth: 1, borderTopColor: '#f1f5f9' }}>
-          {batch.created_at ? <Text style={{ fontSize: 11, color: '#64748b' }}>Order Placed: {formatExactTimestamp(batch.created_at)}</Text> : null}
-          {batch.accepted_at ? <Text style={{ fontSize: 11, color: '#059669' }}>Accepted: {formatExactTimestamp(batch.accepted_at)}{batch.accepted_by ? ` by ${batch.accepted_by}` : ''}</Text> : null}
-          {batch.preparing_at ? <Text style={{ fontSize: 11, color: '#d97706' }}>Cooking: {formatExactTimestamp(batch.preparing_at)}{batch.preparing_by ? ` by ${batch.preparing_by}` : ''}</Text> : null}
-          {batch.ready_at ? <Text style={{ fontSize: 11, color: '#2563eb' }}>Ready: {formatExactTimestamp(batch.ready_at)}{batch.ready_by ? ` by ${batch.ready_by}` : ''}</Text> : null}
-          {batch.served_at ? <Text style={{ fontSize: 11, color: '#475569' }}>Served: {formatExactTimestamp(batch.served_at)}{batch.served_by ? ` by ${batch.served_by}` : ''}</Text> : null}
-          {batch.special_instructions?.includes('[CANCELLED]') ? <Text style={{ fontSize: 11, color: '#ef4444' }}>Cancelled: {formatExactTimestamp(batch.updated_at)}</Text> : null}
-        </View>
+        {/* Staff & Lifecycle Status */}
+        {(batch.accepted_by || batch.preparing_by || batch.ready_by || batch.served_by || batch.special_instructions?.includes('[CANCELLED]')) ? (
+          <View style={{ marginTop: 4, paddingTop: 4, borderTopWidth: 1, borderTopColor: '#f1f5f9' }}>
+            {batch.accepted_by ? <Text style={{ fontSize: 11, color: '#059669', fontWeight: '600' }}>Accepted by {batch.accepted_by}</Text> : null}
+            {batch.preparing_by ? <Text style={{ fontSize: 11, color: '#d97706', fontWeight: '600' }}>Cooking by {batch.preparing_by}</Text> : null}
+            {batch.ready_by ? <Text style={{ fontSize: 11, color: '#2563eb', fontWeight: '600' }}>Ready by {batch.ready_by}</Text> : null}
+            {batch.served_by ? <Text style={{ fontSize: 11, color: '#475569', fontWeight: '600' }}>Served by {batch.served_by}</Text> : null}
+            {batch.special_instructions?.includes('[CANCELLED]') ? <Text style={{ fontSize: 11, color: '#ef4444', fontWeight: '600' }}>Cancelled</Text> : null}
+          </View>
+        ) : null}
 
         {/* Action Buttons */}
         <View style={styles.actionRow}>
@@ -700,14 +714,7 @@ export default function KitchenScreen({ route }) {
       <View style={styles.header}>
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Kitchen Display</Text>
-          <TouchableOpacity onPress={() => {
-            Alert.alert(
-              'App & OTA Diagnostics',
-              `Runtime Version: 2.0.0\nUpdate ID: ${Updates.updateId || '019ff5d4-36b3-7d9f-a342-264702fe4e9d'}\nChannel: ${Updates.channel || 'production'}\nRole: ${profile?.role || 'kitchen'}\nRestaurant ID: ${restaurantId ? 'Present' : 'Missing'}\nFCM Token: Registered`
-            );
-          }}>
-            <Text style={styles.subtitle}>{totalActive} active orders • OTA v2.0.0 ({Updates.updateId ? Updates.updateId.slice(0, 8) : 'Active'})</Text>
-          </TouchableOpacity>
+          <Text style={styles.subtitle}>{totalActive} active {totalActive === 1 ? 'order' : 'orders'}</Text>
         </View>
 
         <TouchableOpacity
@@ -740,13 +747,6 @@ export default function KitchenScreen({ route }) {
           <Ionicons name="log-out-outline" size={20} color="#ef4444" />
         </TouchableOpacity>
       </View>
-
-      {/* Action Diagnostics Log Banner */}
-      {Boolean(lastActionLog) && (
-        <View style={{ backgroundColor: '#1e293b', paddingVertical: 6, paddingHorizontal: 16, alignItems: 'center' }}>
-          <Text style={{ color: '#38bdf8', fontSize: 12, fontWeight: '700' }}>{lastActionLog}</Text>
-        </View>
-      )}
 
       {/* Offline Connectivity Banner */}
       {isOffline && (

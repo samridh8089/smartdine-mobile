@@ -42,3 +42,5 @@ yarn-error.*
 
 *.hbc*
 dist-android/
+
+firebase-service-account*.json

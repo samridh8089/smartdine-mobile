@@ -26,6 +26,7 @@ const PENDING_OWNER_ORDERS_KEY = '@smartdine_owner_pending_orders';
 export default function OrdersScreen({ route }) {
   const navigation = useNavigation();
   const profile = route?.params?.profile ?? {};
+  // ─── 1. useState Declarations ─────────────────────────────────────────
   const [restaurantId, setRestaurantId] = useState(
     profile?.restaurant_id || profile?.restaurants?.id || null
   );
@@ -33,29 +34,41 @@ export default function OrdersScreen({ route }) {
 
   const [assignedTableIds, setAssignedTableIds] = useState([]);
   const [assignedTableNames, setAssignedTableNames] = useState([]);
+  const [tab, setTab] = useState('orders'); // 'orders' | 'calls'
+  const [orders, setOrders] = useState([]);
+  const [calls, setCalls] = useState([]);
+  const [selectedOrder, setSelectedOrder] = useState(null);
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [selectedDate, setSelectedDate] = useState(() => getTodayDateString('Asia/Kolkata'));
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [isOffline, setIsOffline] = useState(false);
+  const [pendingQueue, setPendingQueue] = useState([]);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [paymentTargetOrder, setPaymentTargetOrder] = useState(null);
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState(null); // 'Cash' | 'UPI' | 'Card'
+  const [paymentProcessing, setPaymentProcessing] = useState(false);
 
-  useEffect(() => {
-    async function fetchMissingRestaurantId() {
-      if (!restaurantId) {
-        try {
-          const { data: { user } } = await supabase.auth.getUser();
-          if (user) {
-            const { data: p } = await supabase
-              .from('profiles')
-              .select('restaurant_id')
-              .eq('id', user.id)
-              .maybeSingle();
-            if (p?.restaurant_id) setRestaurantId(p.restaurant_id);
-          }
-        } catch (e) {
-          console.log('[OrdersScreen] fetch restaurant_id error:', e?.message);
-        }
-      }
+  // ─── 2. useRef Declarations ───────────────────────────────────────────
+  const selectedDateRef = useRef(selectedDate);
+  const knownReadyIds = useRef(new Set());
+  const knownCallIds = useRef(new Set());
+  const optimisticOrderUpdates = useRef(new Map()); // Map<orderId, { status: string, timestamp: number }>
+
+  // ─── 3. useCallback Declarations ──────────────────────────────────────
+  const savePendingQueue = useCallback(async (queue) => {
+    setPendingQueue(queue);
+    try {
+      await AsyncStorage.setItem(PENDING_OWNER_ORDERS_KEY, JSON.stringify(queue));
+    } catch (e) {
+      console.log('[OrdersScreen] Save pending queue error:', e?.message);
     }
-    fetchMissingRestaurantId();
-  }, [restaurantId]);
+  }, []);
 
-  // Load table assignments for waiter role
   const loadAssignedTables = useCallback(async () => {
     if (!restaurantId || !profile?.id) return;
     try {
@@ -67,67 +80,6 @@ export default function OrdersScreen({ route }) {
       console.log('[OrdersScreen] loadAssignedTables error:', e?.message);
     }
   }, [restaurantId, profile?.id]);
-
-  useEffect(() => {
-    if (role === 'waiter' || (role === 'supervisor' && profile?.department === 'waiter')) {
-      loadAssignedTables();
-    }
-  }, [role, profile?.department, loadAssignedTables]);
-
-  const [tab, setTab] = useState('orders'); // 'orders' | 'calls'
-  const [orders, setOrders] = useState([]);
-  const [calls, setCalls] = useState([]);
-  const [selectedOrder, setSelectedOrder] = useState(null);
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [selectedDate, setSelectedDate] = useState(() => getTodayDateString('Asia/Kolkata'));
-  const selectedDateRef = useRef(selectedDate);
-  useEffect(() => {
-    selectedDateRef.current = selectedDate;
-  }, [selectedDate]);
-  const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [actionLoading, setActionLoading] = useState(false);
-  const [showCancelModal, setShowCancelModal] = useState(false);
-  const [cancelReason, setCancelReason] = useState('');
-  const [isOffline, setIsOffline] = useState(false);
-  const [pendingQueue, setPendingQueue] = useState([]);
-
-  // Payment Collection Modal
-  const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [paymentTargetOrder, setPaymentTargetOrder] = useState(null);
-  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState(null); // 'Cash' | 'UPI' | 'Card'
-  const [paymentProcessing, setPaymentProcessing] = useState(false);
-
-  const knownReadyIds = useRef(new Set());
-  const knownCallIds = useRef(new Set());
-
-  // Load offline queue on init
-  useEffect(() => {
-    async function loadPendingQueue() {
-      try {
-        const stored = await AsyncStorage.getItem(PENDING_OWNER_ORDERS_KEY);
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setPendingQueue(parsed);
-          }
-        }
-      } catch (e) {
-        console.log('[OrdersScreen] Load pending queue error:', e?.message);
-      }
-    }
-    loadPendingQueue();
-  }, []);
-
-  const savePendingQueue = async (queue) => {
-    setPendingQueue(queue);
-    try {
-      await AsyncStorage.setItem(PENDING_OWNER_ORDERS_KEY, JSON.stringify(queue));
-    } catch (e) {
-      console.log('[OrdersScreen] Save pending queue error:', e?.message);
-    }
-  };
 
   const loadOrders = useCallback(async (overrideDate) => {
     if (!restaurantId) { setLoading(false); setRefreshing(false); return; }
@@ -154,7 +106,26 @@ export default function OrdersScreen({ route }) {
       }
 
       setIsOffline(false);
-      const allOrders = data || [];
+      const rawOrders = data || [];
+      const now = Date.now();
+      const STATUS_RANK = { new: 0, pending: 0, accepted: 1, preparing: 2, ready: 3, served: 4, completed: 5, cancelled: 99 };
+
+      const allOrders = rawOrders.map(o => {
+        const opt = optimisticOrderUpdates.current.get(o.id);
+        if (opt) {
+          if (now - opt.timestamp > 15000) {
+            optimisticOrderUpdates.current.delete(o.id);
+          } else {
+            if ((STATUS_RANK[o.status] || 0) >= (STATUS_RANK[opt.status] || 0)) {
+              optimisticOrderUpdates.current.delete(o.id);
+            } else {
+              return { ...o, status: opt.status };
+            }
+          }
+        }
+        return o;
+      });
+
       setOrders(allOrders);
 
       // Check for ready orders -> sound alert
@@ -168,7 +139,6 @@ export default function OrdersScreen({ route }) {
       });
       if (hasNewReady && ['owner', 'manager', 'waiter'].includes(role)) {
         startAlarm('food_ready', 'Order Ready', 'Food is ready for pickup');
-        sendLocalNotification('Order Ready', 'Food is ready for pickup');
         Vibration.vibrate([0, 500, 250, 500]);
       }
       if (readyOrders.length === 0) stopAlarm('food_ready');
@@ -181,6 +151,55 @@ export default function OrdersScreen({ route }) {
       setRefreshing(false);
     }
   }, [restaurantId, role]);
+
+  // ─── 4. useEffect Declarations ────────────────────────────────────────
+  useEffect(() => {
+    selectedDateRef.current = selectedDate;
+  }, [selectedDate]);
+
+  useEffect(() => {
+    async function fetchMissingRestaurantId() {
+      if (!restaurantId) {
+        try {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (user) {
+            const { data: p } = await supabase
+              .from('profiles')
+              .select('restaurant_id')
+              .eq('id', user.id)
+              .maybeSingle();
+            if (p?.restaurant_id) setRestaurantId(p.restaurant_id);
+          }
+        } catch (e) {
+          console.log('[OrdersScreen] fetch restaurant_id error:', e?.message);
+        }
+      }
+    }
+    fetchMissingRestaurantId();
+  }, [restaurantId]);
+
+  useEffect(() => {
+    if (role === 'waiter' || (role === 'supervisor' && profile?.department === 'waiter')) {
+      loadAssignedTables();
+    }
+  }, [role, profile?.department, loadAssignedTables]);
+
+  useEffect(() => {
+    async function loadPendingQueue() {
+      try {
+        const stored = await AsyncStorage.getItem(PENDING_OWNER_ORDERS_KEY);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setPendingQueue(parsed);
+          }
+        }
+      } catch (e) {
+        console.log('[OrdersScreen] Load pending queue error:', e?.message);
+      }
+    }
+    loadPendingQueue();
+  }, []);
 
   const loadCalls = useCallback(async () => {
     if (!restaurantId) return;
@@ -210,7 +229,6 @@ export default function OrdersScreen({ route }) {
       });
       if (hasNew && ['owner', 'manager', 'waiter'].includes(role)) {
         startAlarm('waiter_call', 'Customer Call', 'A customer needs assistance');
-        sendLocalNotification('Customer Call', 'A customer needs assistance');
         Vibration.vibrate([0, 300, 200, 300]);
       }
       if (allCalls.length === 0) stopAlarm('waiter_call');
@@ -371,79 +389,92 @@ export default function OrdersScreen({ route }) {
   };
 
   const updateOrderStatus = async (orderId, newStatus) => {
-    setActionLoading(true);
-    try {
-      const now = new Date().toISOString();
-      const staffName = profile?.full_name || profile?.name || 'Staff';
+    // 1. Instant Optimistic UI Update (0ms perceived latency for staff / owner)
+    optimisticOrderUpdates.current.set(orderId, {
+      status: newStatus,
+      timestamp: Date.now()
+    });
 
-      // 1. Call authoritative backend API first to run inventoryEngine transitions
-      let apiSuccess = false;
+    const prevOrder = selectedOrder;
+    if (selectedOrder?.id === orderId) {
+      setSelectedOrder(prev => prev ? { ...prev, status: newStatus } : null);
+    }
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
+
+    // 2. Fire-and-forget background worker to sync authoritative backend & database
+    (async () => {
       try {
-        const apiRes = await fetchWithAuth('/api/staff/update-order-status', {
-          method: 'POST',
-          body: JSON.stringify({
-            orderId,
-            newStatus,
-            staffName
-          })
-        }).then(r => r.json());
+        const now = new Date().toISOString();
+        const staffName = profile?.full_name || profile?.name || 'Staff';
 
-        if (apiRes && (apiRes.success || apiRes.order || apiRes.batch)) {
-          apiSuccess = true;
-        }
-      } catch (apiErr) {
-        console.log('[OrdersScreen] Backend API update failed, falling back:', apiErr?.message);
-      }
+        let apiSuccess = false;
+        try {
+          const apiRes = await fetchWithAuth('/api/staff/update-order-status', {
+            method: 'POST',
+            body: JSON.stringify({
+              orderId,
+              newStatus,
+              staffName
+            })
+          }).then(r => r.json());
 
-      // 2. Direct client update fallback if offline or backend route unreachable
-      if (!apiSuccess) {
-        const updates = { status: newStatus, updated_at: now };
-        if (newStatus === 'completed') updates.payment_status = 'paid';
-
-        const { error } = await supabase
-          .from('orders')
-          .update(updates)
-          .eq('id', orderId);
-
-        if (error) throw new Error(error.message || 'Failed to update order status');
-
-        if (['accepted', 'preparing', 'ready', 'served', 'completed'].includes(newStatus)) {
-          const batchUpdates = { status: newStatus, updated_at: now };
-          if (newStatus === 'accepted') batchUpdates.accepted_at = now;
-          if (newStatus === 'preparing') batchUpdates.preparing_at = now;
-          if (newStatus === 'ready') batchUpdates.ready_at = now;
-          if (newStatus === 'served' || newStatus === 'completed') batchUpdates.served_at = now;
-
-          await supabase
-            .from('order_batches')
-            .update(batchUpdates)
-            .eq('order_id', orderId)
-            .neq('status', 'cancelled');
+          if (apiRes && (apiRes.success || apiRes.order || apiRes.batch)) {
+            apiSuccess = true;
+          }
+        } catch (apiErr) {
+          console.log('[OrdersScreen] Backend API update failed, falling back:', apiErr?.message);
         }
 
-        if (['served', 'completed'].includes(newStatus)) {
-          // Direct fallback consumption safeguard
-          try {
+        // 3. Direct client update fallback if offline or backend route unreachable
+        if (!apiSuccess) {
+          const updates = { status: newStatus, updated_at: now };
+          if (newStatus === 'completed') updates.payment_status = 'paid';
+
+          const { error } = await supabase
+            .from('orders')
+            .update(updates)
+            .eq('id', orderId);
+
+          if (error) throw error;
+
+          if (['accepted', 'preparing', 'ready', 'served', 'completed'].includes(newStatus)) {
+            const batchUpdates = { status: newStatus, updated_at: now };
+            if (newStatus === 'accepted') batchUpdates.accepted_at = now;
+            if (newStatus === 'preparing') batchUpdates.preparing_at = now;
+            if (newStatus === 'ready') batchUpdates.ready_at = now;
+            if (newStatus === 'served' || newStatus === 'completed') batchUpdates.served_at = now;
+
             await supabase
-              .from('inventory_reservations')
-              .update({ status: 'CONSUMED', updated_at: now })
+              .from('order_batches')
+              .update(batchUpdates)
               .eq('order_id', orderId)
-              .eq('status', 'ACTIVE');
-          } catch (resErr) {
-            console.log('[OrdersScreen] Reservation update notice:', resErr?.message);
+              .neq('status', 'cancelled');
+          }
+
+          if (['served', 'completed'].includes(newStatus)) {
+            try {
+              await supabase
+                .from('inventory_reservations')
+                .update({ status: 'CONSUMED', updated_at: now })
+                .eq('order_id', orderId)
+                .eq('status', 'ACTIVE');
+            } catch (resErr) {
+              console.log('[OrdersScreen] Reservation update notice:', resErr?.message);
+            }
           }
         }
+      } catch (e) {
+        console.log('[OrdersScreen] Background sync error:', e?.message);
+        setIsOffline(true);
+        const actionItem = {
+          type: 'update_order_status',
+          orderId,
+          newStatus,
+          timestamp: Date.now(),
+        };
+        savePendingQueue([...pendingQueue, actionItem]);
       }
-
-      await loadOrders();
-      if (selectedOrder?.id === orderId) {
-        setSelectedOrder(prev => prev ? { ...prev, status: newStatus } : null);
-      }
-    } catch (e) {
-      Alert.alert('Error', e.message || 'Could not update order status');
-    } finally {
-      setActionLoading(false);
-    }
+    })();
   };
 
   const cancelOrder = async (orderId) => {

@@ -2,12 +2,14 @@ import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Alert,
   ActivityIndicator, Modal, TextInput, ScrollView, Linking,
+  Platform, AppState,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { supabase } from '../lib/supabase';
 import { COLORS } from '../lib/theme';
+import { getNotificationDiagnostics } from '../lib/notifications';
 
 export default function AccountScreen({ route }) {
   const profile = route?.params?.profile ?? {};
@@ -533,11 +535,37 @@ export default function AccountScreen({ route }) {
             </View>
 
             <View style={{ gap: 8, marginBottom: 20 }}>
-              <Text style={{ color: '#e2e8f0', fontSize: 13 }}>📱 Device Info: Android / Expo React Native</Text>
-              <Text style={{ color: '#e2e8f0', fontSize: 13 }}>🔑 Push Token: {profile?.push_token || 'ExponentPushToken[active_registered]'}</Text>
-              <Text style={{ color: '#e2e8f0', fontSize: 13 }}>🔔 Audio Unlocked: TRUE (Channel: cleverops_orders)</Text>
-              <Text style={{ color: '#e2e8f0', fontSize: 13 }}>🌐 Network State: ONLINE (Connected)</Text>
-              <Text style={{ color: '#e2e8f0', fontSize: 13 }}>🏢 Restaurant ID: {restaurantId || 'e2163ab2-7fec-40ea-82ed-440292fc810e'}</Text>
+              <Text style={{ color: '#e2e8f0', fontSize: 13 }}>📱 Device: Android (SDK {String(Platform.Version || '33+')})</Text>
+              <Text style={{ color: '#e2e8f0', fontSize: 13 }}>
+                🔑 FCM Token: {
+                  (() => {
+                    const raw = profile?.push_token || getNotificationDiagnostics()?.token;
+                    if (!raw) return 'Pending Registration';
+                    return raw.length > 20 ? `${raw.slice(0, 15)}...${raw.slice(-6)}` : raw;
+                  })()
+                }
+              </Text>
+              <Text style={{ color: '#e2e8f0', fontSize: 13 }}>
+                📡 Push Status: {profile?.push_token ? 'REGISTERED (Active)' : 'WAITING FOR TOKEN'}
+              </Text>
+              <Text style={{ color: '#e2e8f0', fontSize: 13 }}>
+                🛡️ Permission: {(getNotificationDiagnostics()?.permissionStatus || 'granted').toUpperCase()} (POST_NOTIFICATIONS)
+              </Text>
+              <Text style={{ color: '#e2e8f0', fontSize: 13 }}>
+                🔔 Channels: smartdine_kitchen, waiter, owner (MAX, Sound: order_tune)
+              </Text>
+              <Text style={{ color: '#e2e8f0', fontSize: 13 }}>
+                ⚡ App State: {(AppState.currentState || 'active').toUpperCase()}
+              </Text>
+              <Text style={{ color: '#e2e8f0', fontSize: 13 }}>
+                ⏱️ Last Push Alert: {getNotificationDiagnostics()?.lastReceivedPush ? `${getNotificationDiagnostics().lastReceivedPush.title} (${getNotificationDiagnostics().lastReceivedPush.time})` : 'None in current session'}
+              </Text>
+              <Text style={{ color: '#e2e8f0', fontSize: 13 }}>
+                🏢 Restaurant ID: {restaurantId || 'N/A'}
+              </Text>
+              <Text style={{ color: '#e2e8f0', fontSize: 13 }}>
+                👤 Role: {role} {department ? `(${department})` : ''}
+              </Text>
             </View>
 
             <TouchableOpacity

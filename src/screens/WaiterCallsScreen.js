@@ -112,7 +112,6 @@ export default function WaiterCallsScreen({ route }) {
       });
       if (hasNew) {
         startAlarm('waiter_call', '🔔 Customer Call', 'A customer needs assistance');
-        sendLocalNotification('🔔 Customer Call', 'A customer at a table needs assistance');
         Vibration.vibrate([0, 400, 200, 400]);
       }
       if (pendingCalls.length === 0) {

@@ -213,8 +213,16 @@ export function formatOrderId(id) {
   return `#${String(id).slice(-4).toUpperCase()}`;
 }
 
-import { formatExactTimestamp } from './timestamp';
-
 export function timeAgo(dateStr) {
-  return formatExactTimestamp(dateStr);
+  if (!dateStr) return '';
+  const date = new Date(dateStr);
+  if (isNaN(date.getTime())) return '';
+  const diffMs = Date.now() - date.getTime();
+  const diffSecs = Math.max(0, Math.floor(diffMs / 1000));
+  if (diffSecs < 60) return 'Just now';
+  const diffMins = Math.floor(diffSecs / 60);
+  if (diffMins < 60) return `${diffMins}m ago`;
+  const diffHrs = Math.floor(diffMins / 60);
+  if (diffHrs < 24) return `${diffHrs}h ago`;
+  return `${Math.floor(diffHrs / 24)}d ago`;
 }

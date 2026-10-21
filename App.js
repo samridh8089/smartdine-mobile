@@ -8,7 +8,7 @@ import * as Updates from 'expo-updates';
 import * as Notifications from 'expo-notifications';
 
 import { supabase } from './src/lib/supabase';
-import { setupNotificationChannel, sendLocalNotification } from './src/lib/notifications';
+import { setupNotificationChannel, sendLocalNotification, registerForPushNotificationsAsync } from './src/lib/notifications';
 import LoginScreen from './src/screens/LoginScreen';
 import OwnerSignupScreen from './src/screens/OwnerSignupScreen';
 import MainTabNavigator from './src/navigation/MainTabNavigator';
@@ -115,6 +115,16 @@ export default function App() {
           }
         });
       }
+
+      if (typeof Notifications?.addNotificationReceivedListener === 'function') {
+        Notifications.addNotificationReceivedListener((notification) => {
+          try {
+            console.log('[App] Remote notification received:', notification?.request?.content?.title);
+          } catch (e) {
+            console.log('[App] Notification receive error:', e?.message);
+          }
+        });
+      }
     } catch (e) {
       console.log('[App] Notification setup error:', e?.message);
     }
@@ -166,9 +176,10 @@ export default function App() {
 
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return;
+        registerForPushNotificationsAsync(user.id).catch(e => console.log('[App] Push token startup registration:', e?.message));
         const { data: p } = await supabase
           .from('profiles')
-          .select('restaurant_id, role, department')
+          .select('restaurant_id, role')
           .eq('id', user.id)
           .maybeSingle();
 
@@ -198,7 +209,6 @@ export default function App() {
             ) {
               const { startAlarm } = await import('./src/lib/alarmManager');
               startAlarm('new_order', '🔔 New Order Arrived!', 'A new order needs attention.');
-              sendLocalNotification('🔔 New Order Arrived!', 'A new order needs attention.', 'smartdine_kitchen');
             }
 
             // Waiter / Waiter Supervisor
@@ -206,7 +216,6 @@ export default function App() {
               if (!orderTableId || assignedTables.length === 0 || assignedTables.includes(orderTableId)) {
                 const { startAlarm } = await import('./src/lib/alarmManager');
                 startAlarm('new_order', '🔔 New Order for Your Table!', `Table order received.`);
-                sendLocalNotification('🔔 New Order for Your Table!', `Table order received.`, 'smartdine_waiter');
               }
             }
           })
@@ -225,7 +234,6 @@ export default function App() {
             if (isAllowedWaiter || isManagerOrOwner || isWaiterSupervisor) {
               const { startAlarm } = await import('./src/lib/alarmManager');
               startAlarm('waiter_call', '🔔 Customer Call', 'A customer at a table needs assistance');
-              sendLocalNotification('🔔 Customer Call', 'A customer at a table needs assistance', 'smartdine-urgent-v3');
             }
           })
           .on('postgres_changes', {

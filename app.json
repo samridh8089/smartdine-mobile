@@ -1,9 +1,9 @@
 {
   "expo": {
     "name": "CleverOps",
-    "owner": "ad-city",
+    "owner": "deepak133",
     "slug": "smartdine-mobile-app",
-    "version": "2.1.1",
+    "version": "2.1.3",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -26,7 +26,7 @@
     "android": {
       "package": "cleverops.app.in",
       "googleServicesFile": "./google-services.json",
-      "versionCode": 15,
+      "versionCode": 30,
       "permissions": [
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE",
@@ -72,11 +72,11 @@
     },
     "extra": {
       "eas": {
-        "projectId": "2fb0358d-6e46-4269-996d-0614a98052e1"
+        "projectId": "ce3e3736-755b-46c6-ab6d-285377cbe349"
       }
     },
     "updates": {
-      "url": "https://u.expo.dev/2fb0358d-6e46-4269-996d-0614a98052e1",
+      "url": "https://u.expo.dev/ce3e3736-755b-46c6-ab6d-285377cbe349",
       "checkAutomatically": "NEVER",
       "fallbackToCacheTimeout": 0
     },

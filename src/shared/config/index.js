@@ -8,7 +8,7 @@ export const CONFIG = {
   API_BASE_URL: process.env.EXPO_PUBLIC_API_URL || extra.EXPO_PUBLIC_API_URL || 'https://www.cleverops.in',
   NOTIFICATION_CHANNEL_ID: 'smartdine-urgent-v3',
   NOTIFICATION_CHANNEL_NAME: 'Urgent Orders & Calls',
-  PROJECT_ID: extra.eas?.projectId || '2fb0358d-6e46-4269-996d-0614a98052e1',
+  PROJECT_ID: extra.eas?.projectId || 'ce3e3736-755b-46c6-ab6d-285377cbe349',
   POLL_INTERVAL_MS: 6000,
   HEARTBEAT_INTERVAL_MS: 30000,
 };
