@@ -27,6 +27,7 @@
       }
     },
     "production-aab": {
+      "distribution": "store",
       "channel": "production",
       "android": {
         "buildType": "app-bundle"
