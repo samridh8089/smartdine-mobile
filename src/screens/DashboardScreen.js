@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, RefreshControl,
@@ -16,6 +17,7 @@ import {
 import { stopAllAlarms } from '../lib/alarmManager';
 import { unregisterPushToken } from '../lib/notifications';
 import { fetchLiveTableStatus } from '../lib/tableAssignments';
+import { mobileCache } from '../lib/mobileCache';
 
 const INVENTORY_UNITS = [
   'kg',
@@ -66,19 +68,20 @@ export default function DashboardScreen({ route }) {
     resolveRestId();
   }, [restaurantId]);
 
-  const [restaurantName, setRestaurantName] = useState('SmartDine');
-  const [bellOn, setBellOn] = useState(true);
-  const [todayOrders, setTodayOrders] = useState([]);
-  const [lowStockItems, setLowStockItems] = useState([]);
-  const [outOfStockMenuItems, setOutOfStockMenuItems] = useState([]);
-  const [liveTableStats, setLiveTableStats] = useState({
+  const cachedDash = restaurantId ? mobileCache.get(`dash_${restaurantId}`) : null;
+  const [restaurantName, setRestaurantName] = useState(() => cachedDash?.restaurantName || 'SmartDine');
+  const [bellOn, setBellOn] = useState(() => cachedDash?.bellOn ?? true);
+  const [todayOrders, setTodayOrders] = useState(() => cachedDash?.todayOrders || []);
+  const [lowStockItems, setLowStockItems] = useState(() => cachedDash?.lowStockItems || []);
+  const [outOfStockMenuItems, setOutOfStockMenuItems] = useState(() => cachedDash?.outOfStockMenuItems || []);
+  const [liveTableStats, setLiveTableStats] = useState(() => cachedDash?.liveTableStats || {
     total: 0,
     available: 0,
     occupied: 0,
     inactive: 0,
     occupancyRate: 0
   });
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !cachedDash);
   const [refreshing, setRefreshing] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
 
@@ -365,6 +368,15 @@ function convertUnitToItemBase(reqQty, reqUnit, baseUnit) {
         setLiveTableStats(stats);
       }
 
+      mobileCache.set(`dash_${restaurantId}`, {
+        restaurantName: restData?.name || restaurantName,
+        bellOn: restData?.settings?.owner_bell_enabled !== false,
+        todayOrders: todayFiltered,
+        lowStockItems: invData ? invData.filter(i => Number(i.current_stock) <= Number(i.minimum_stock)) : [],
+        outOfStockMenuItems: menuData || [],
+        liveTableStats: stats || liveTableStats
+      });
+
     } catch (e) {
       console.log('Dashboard load error:', e?.message);
       setIsOffline(true);
@@ -389,11 +401,7 @@ function convertUnitToItemBase(reqQty, reqUnit, baseUnit) {
         { event: '*', schema: 'public', table: 'orders', filter: `restaurant_id=eq.${restaurantId}` },
         () => loadDashboardData()
       )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'order_items' },
-        () => loadDashboardData()
-      )
+      // Unfiltered global order_items listener removed to prevent database saturation
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'menu_items', filter: `restaurant_id=eq.${restaurantId}` },
@@ -518,6 +526,7 @@ function convertUnitToItemBase(reqQty, reqUnit, baseUnit) {
               onPress={async () => {
                 stopAllAlarms();
                 if (profile?.id) await unregisterPushToken(profile.id);
+                await AsyncStorage.removeItem('@smartdine_auth_profile').catch(() => {});
                 await supabase.auth.signOut().catch(() => {});
                 navigation.replace('Login');
               }}

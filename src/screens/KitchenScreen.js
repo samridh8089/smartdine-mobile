@@ -18,6 +18,7 @@ import { unregisterPushToken, sendLocalNotification } from '../lib/notifications
 import {
   COLORS, FONTS, RADIUS, SHADOWS, timeAgo, formatCurrency,
 } from '../lib/theme';
+import { mobileCache } from '../lib/mobileCache';
 
 const CANCEL_REASONS = [
   'Item Out of Stock',
@@ -35,11 +36,12 @@ export default function KitchenScreen({ route }) {
   const [restaurantId, setRestaurantId] = useState(
     profile?.restaurant_id || profile?.restaurants?.id || null
   );
+  const cachedKitchen = restaurantId ? mobileCache.get(`kitchen_${restaurantId}`) : null;
   const [activeTab, setActiveTab] = useState('new'); // 'new' | 'preparing' | 'ready'
-  const [newOrders, setNewOrders] = useState([]);
-  const [preparingOrders, setPreparingOrders] = useState([]);
-  const [readyOrders, setReadyOrders] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [newOrders, setNewOrders] = useState(() => cachedKitchen?.newOrders || []);
+  const [preparingOrders, setPreparingOrders] = useState(() => cachedKitchen?.preparingOrders || []);
+  const [readyOrders, setReadyOrders] = useState(() => cachedKitchen?.readyOrders || []);
+  const [loading, setLoading] = useState(() => !cachedKitchen);
   const [refreshing, setRefreshing] = useState(false);
   const [bellOn, setBellOn] = useState(true);
   const [actionLoading, setActionLoading] = useState({});
@@ -135,6 +137,11 @@ export default function KitchenScreen({ route }) {
       setNewOrders(newB);
       setPreparingOrders(prepB);
       setReadyOrders(readyB);
+      mobileCache.set(`kitchen_${restaurantId}`, {
+        newOrders: newB,
+        preparingOrders: prepB,
+        readyOrders: readyB
+      });
 
       // Check for new orders to trigger bell
       let hasNew = false;
@@ -277,7 +284,7 @@ export default function KitchenScreen({ route }) {
         }
       });
 
-    const timer = setInterval(loadOrders, 6000);
+    const timer = setInterval(loadOrders, 30000);
 
     return () => {
       clearInterval(timer);
@@ -740,7 +747,8 @@ export default function KitchenScreen({ route }) {
           onPress={async () => {
             stopAllAlarms();
             if (profile?.id) await unregisterPushToken(profile.id);
-            await supabase.auth.signOut().catch(() => {});
+            await AsyncStorage.removeItem('@smartdine_auth_profile').catch(() => {});
+                await supabase.auth.signOut().catch(() => {});
             navigation.replace('Login');
           }}
         >

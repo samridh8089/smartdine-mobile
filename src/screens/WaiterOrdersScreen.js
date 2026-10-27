@@ -15,6 +15,7 @@ import { CONFIG } from '../shared/config';
 import { startAlarm, stopAlarm, stopAllAlarms } from '../lib/alarmManager';
 import { sendLocalNotification, unregisterPushToken } from '../lib/notifications';
 import { COLORS, FONTS, RADIUS, SHADOWS, formatCurrency, timeAgo, getStatusColor, getStatusLabel } from '../lib/theme';
+import { mobileCache } from '../lib/mobileCache';
 
 import { getAssignedTableIdsForWaiter, fetchTableAssignments, fetchLiveTableStatus } from '../lib/tableAssignments';
 
@@ -52,9 +53,10 @@ export default function WaiterOrdersScreen({ route }) {
     fetchMissingRestaurantId();
   }, [restaurantId]);
 
+  const cachedWaiterOrders = restaurantId ? mobileCache.get(`waiter_orders_${restaurantId}`) : null;
   const [tab, setTab] = useState('ready'); // 'ready' | 'served' | 'all'
-  const [orders, setOrders] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [orders, setOrders] = useState(() => cachedWaiterOrders || []);
+  const [loading, setLoading] = useState(() => !cachedWaiterOrders);
   const [refreshing, setRefreshing] = useState(false);
   const [actionLoading, setActionLoading] = useState({});
   const [isOffline, setIsOffline] = useState(false);
@@ -120,6 +122,7 @@ export default function WaiterOrdersScreen({ route }) {
         allOrders = allOrders.filter(o => !o.table_id || assignedTableIds.includes(o.table_id));
       }
 
+      mobileCache.set(`waiter_orders_${restaurantId}`, allOrders);
       setOrders(allOrders);
 
       // Bell for new ready orders scoped to this waiter's tables
@@ -190,7 +193,7 @@ export default function WaiterOrdersScreen({ route }) {
         }
       });
 
-    const timer = setInterval(loadOrders, 6000);
+    const timer = setInterval(loadOrders, 30000);
     return () => {
       stopAllAlarms();
       Vibration.cancel();
@@ -357,7 +360,8 @@ export default function WaiterOrdersScreen({ route }) {
           onPress={async () => {
             stopAllAlarms();
             if (profile?.id) await unregisterPushToken(profile.id);
-            await supabase.auth.signOut().catch(() => {});
+            await AsyncStorage.removeItem('@smartdine_auth_profile').catch(() => {});
+                await supabase.auth.signOut().catch(() => {});
             navigation.replace('Login');
           }}
         >

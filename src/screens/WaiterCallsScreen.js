@@ -11,6 +11,7 @@ import { supabase } from '../lib/supabase';
 import { startAlarm, stopAlarm, stopAllAlarms } from '../lib/alarmManager';
 import { sendLocalNotification, unregisterPushToken } from '../lib/notifications';
 import { COLORS, FONTS, RADIUS, SHADOWS, timeAgo } from '../lib/theme';
+import { mobileCache } from '../lib/mobileCache';
 
 import { getAssignedTableIdsForWaiter, fetchTableAssignments } from '../lib/tableAssignments';
 
@@ -47,9 +48,10 @@ export default function WaiterCallsScreen({ route }) {
     fetchMissingRestaurantId();
   }, [restaurantId]);
 
+  const cachedCalls = restaurantId ? mobileCache.get(`waiter_calls_${restaurantId}`) : null;
   const [tabFilter, setTabFilter] = useState('pending'); // 'pending' | 'accepted' | 'completed' | 'all'
-  const [calls, setCalls] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [calls, setCalls] = useState(() => cachedCalls || []);
+  const [loading, setLoading] = useState(() => !cachedCalls);
   const [refreshing, setRefreshing] = useState(false);
   const [actionLoading, setActionLoading] = useState({});
   const [isOffline, setIsOffline] = useState(false);
@@ -99,6 +101,7 @@ export default function WaiterCallsScreen({ route }) {
         allCalls = allCalls.filter(c => !c.table_id || assignedTableIds.includes(c.table_id));
       }
 
+      mobileCache.set(`waiter_calls_${restaurantId}`, allCalls);
       setCalls(allCalls);
 
       // Trigger alarm for pending calls scoped to this waiter
@@ -171,7 +174,7 @@ export default function WaiterCallsScreen({ route }) {
         }
       });
 
-    const poll = setInterval(loadCalls, 4000);
+    const poll = setInterval(loadCalls, 30000);
     return () => {
       stopAllAlarms();
       Vibration.cancel();
@@ -337,7 +340,8 @@ export default function WaiterCallsScreen({ route }) {
           onPress={async () => {
             stopAllAlarms();
             if (profile?.id) await unregisterPushToken(profile.id);
-            await supabase.auth.signOut().catch(() => {});
+            await AsyncStorage.removeItem('@smartdine_auth_profile').catch(() => {});
+                await supabase.auth.signOut().catch(() => {});
             navigation.replace('Login');
           }}
         >

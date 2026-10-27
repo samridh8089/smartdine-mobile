@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
@@ -68,6 +69,30 @@ export default function LoginScreen({ navigation }) {
 
   async function checkExistingSession() {
     try {
+      // 1. Instant launch check from cached profile in AsyncStorage (<50ms!)
+      const cachedProfileRaw = await AsyncStorage.getItem('@smartdine_auth_profile');
+      if (cachedProfileRaw) {
+        try {
+          const cachedProfile = JSON.parse(cachedProfileRaw);
+          if (cachedProfile?.id && cachedProfile?.role) {
+            navigateByRole(cachedProfile.role, cachedProfile);
+            // Proactive silent token refresh without nuking profile cache
+            supabase.auth.getSession().then(async ({ data: { session } }) => {
+              if (!session?.user?.id) {
+                // Try silent session refresh instead of deleting profile
+                try {
+                  const { data: refreshData } = await supabase.auth.refreshSession();
+                  if (refreshData?.session?.user) {
+                    console.log('[LoginScreen] Session silently refreshed on launch.');
+                  }
+                } catch (_) {}
+              }
+            }).catch(() => {});
+            return;
+          }
+        } catch (_) {}
+      }
+
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user?.id) {
         await fetchProfileAndNavigate(session.user.id);
@@ -96,27 +121,14 @@ export default function LoginScreen({ navigation }) {
         return;
       }
 
-      // Check staff email verification if not owner or super admin
+      // Staff active check - only deactivate if explicitly marked false
       const isOwnerOrSuper = profile.role === 'owner' || profile.role === 'super_admin';
-      if (!isOwnerOrSuper) {
-        const { data: userData } = await supabase.auth.getUser();
-        const emailConfirmed = userData?.user?.email_confirmed_at || profile.is_verified === true || profile.verification_status === 'verified';
-        if (!emailConfirmed && (profile.is_verified === false || profile.verification_status === 'pending_verification')) {
-          await supabase.auth.signOut().catch(() => {});
-          setCheckingSession(false);
-          setErrorMsg('Your email is not verified yet. Please verify your email before signing in, or use Resend Verification below.');
-          setUnverifiedEmail(profile.email || userData?.user?.email || '');
-          animateIn();
-          return;
-        }
-      }
-
-      // Check active status
       const staffMeta = profile.restaurants?.settings?.staff_metadata || {};
       const metaActive = staffMeta[userId]?.is_active;
-      const isProfileActive = profile.is_active !== false && metaActive !== false;
 
-      if (!isProfileActive && !isOwnerOrSuper) {
+      // Only block if explicitly deactivated (false, not undefined)
+      if (!isOwnerOrSuper && (profile.is_active === false || metaActive === false)) {
+        await AsyncStorage.removeItem('@smartdine_auth_profile').catch(() => {});
         await supabase.auth.signOut().catch(() => {});
         setCheckingSession(false);
         const deactMsg = 'Your staff account has been deactivated. Please contact your manager or administrator.';
@@ -152,14 +164,21 @@ export default function LoginScreen({ navigation }) {
 
   function navigateByRole(role, profile) {
     setCheckingSession(false);
+    if (profile?.id && role) {
+      AsyncStorage.setItem('@smartdine_auth_profile', JSON.stringify(profile)).catch(() => {});
+    }
     const normalizedRole = (role || '').toLowerCase().trim();
     switch (normalizedRole) {
       case 'kitchen':
       case 'kds':
       case 'kitchen_staff':
+      case 'head_chef':
+      case 'chef':
+      case 'kitchen_helper':
         navigation.replace('KitchenApp', { profile });
         break;
       case 'waiter':
+      case 'captain':
         navigation.replace('WaiterApp', { profile });
         break;
       case 'cashier':

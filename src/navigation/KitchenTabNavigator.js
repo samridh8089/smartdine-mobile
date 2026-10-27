@@ -5,6 +5,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import KitchenScreen from '../screens/KitchenScreen';
 import MenuMobileScreen from '../screens/MenuMobileScreen';
 import InventoryMobileScreen from '../screens/InventoryMobileScreen';
+import AttendanceMobileScreen from '../screens/AttendanceMobileScreen';
 import AccountScreen from '../screens/AccountScreen';
 import { COLORS, FONTS } from '../lib/theme';
 
@@ -17,7 +18,7 @@ export default function KitchenTabNavigator({ route }) {
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: COLORS.primary,
+        tabBarActiveTintColor: COLORS.primary || '#059669',
         tabBarInactiveTintColor: '#94a3b8',
         tabBarStyle: {
           backgroundColor: '#ffffff',
@@ -28,8 +29,8 @@ export default function KitchenTabNavigator({ route }) {
           paddingTop: 6,
           elevation: 12,
           shadowColor: '#000',
-          shadowOpacity: 0.08,
-          shadowRadius: 10,
+          shadowOpacity: 0.04,
+          shadowRadius: 8,
         },
         tabBarLabelStyle: { ...FONTS.semiBold, fontSize: 10 },
       }}
@@ -39,7 +40,7 @@ export default function KitchenTabNavigator({ route }) {
         component={KitchenScreen}
         initialParams={{ profile }}
         options={{
-          tabBarLabel: 'Kitchen KDS',
+          tabBarLabel: 'Kitchen',
           tabBarIcon: ({ color, size }) => (
             <MaterialCommunityIcons name="chef-hat" size={size} color={color} />
           ),
@@ -50,7 +51,7 @@ export default function KitchenTabNavigator({ route }) {
         component={MenuMobileScreen}
         initialParams={{ profile }}
         options={{
-          tabBarLabel: 'Menu',
+          tabBarLabel: 'Smart Menu',
           tabBarIcon: ({ color, size }) => (
             <MaterialCommunityIcons name="book-open-page-variant-outline" size={size} color={color} />
           ),
@@ -61,9 +62,20 @@ export default function KitchenTabNavigator({ route }) {
         component={InventoryMobileScreen}
         initialParams={{ profile }}
         options={{
-          tabBarLabel: 'Stock & Recipes',
+          tabBarLabel: 'Stock',
           tabBarIcon: ({ color, size }) => (
             <MaterialCommunityIcons name="package-variant-closed" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tab.Screen
+        name="Attendance"
+        component={AttendanceMobileScreen}
+        initialParams={{ profile }}
+        options={{
+          tabBarLabel: 'Attendance',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="camera-outline" size={size} color={color} />
           ),
         }}
       />
@@ -81,4 +93,3 @@ export default function KitchenTabNavigator({ route }) {
     </Tab.Navigator>
   );
 }
-

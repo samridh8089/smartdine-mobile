@@ -19,6 +19,7 @@ import {
 } from '../lib/theme';
 import { fetchTableAssignments } from '../lib/tableAssignments';
 import { getTodayDateString, getDayRangeInTimezone } from '../lib/timestamp';
+import { mobileCache } from '../lib/mobileCache';
 
 const ORDER_STATUSES = ['all', 'new', 'accepted', 'preparing', 'ready', 'served', 'completed', 'paid', 'cancelled'];
 const PENDING_OWNER_ORDERS_KEY = '@smartdine_owner_pending_orders';
@@ -35,13 +36,14 @@ export default function OrdersScreen({ route }) {
   const [assignedTableIds, setAssignedTableIds] = useState([]);
   const [assignedTableNames, setAssignedTableNames] = useState([]);
   const [tab, setTab] = useState('orders'); // 'orders' | 'calls'
-  const [orders, setOrders] = useState([]);
+  const cachedOrders = restaurantId ? mobileCache.get(`orders_${restaurantId}`) : null;
+  const [orders, setOrders] = useState(() => cachedOrders || []);
   const [calls, setCalls] = useState([]);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [statusFilter, setStatusFilter] = useState('all');
   const [selectedDate, setSelectedDate] = useState(() => getTodayDateString('Asia/Kolkata'));
   const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !cachedOrders);
   const [refreshing, setRefreshing] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
@@ -126,6 +128,7 @@ export default function OrdersScreen({ route }) {
         return o;
       });
 
+      mobileCache.set(`orders_${restaurantId}`, allOrders);
       setOrders(allOrders);
 
       // Check for ready orders -> sound alert
@@ -298,7 +301,7 @@ export default function OrdersScreen({ route }) {
     const timer = setInterval(() => {
       loadOrders();
       loadCalls();
-    }, 8000);
+    }, 30000);
 
     return () => {
       stopAllAlarms();

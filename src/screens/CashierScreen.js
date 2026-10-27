@@ -9,6 +9,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
 import { fetchWithAuth } from '../lib/apiClient';
+import { mobileCache } from '../lib/mobileCache';
 import { CONFIG } from '../shared/config';
 import { COLORS, FONTS, RADIUS, SHADOWS, formatCurrency, timeAgo, getStatusColor, getStatusLabel } from '../lib/theme';
 
@@ -16,9 +17,10 @@ export default function CashierScreen({ route }) {
   const profile = route?.params?.profile ?? {};
   const restaurantId = profile?.restaurant_id;
 
+  const cachedCashier = restaurantId ? mobileCache.get(`cashier_${restaurantId}`) : null;
   const [tab, setTab] = useState('all'); // 'all' | 'unpaid' | 'marked' | 'paid'
-  const [orders, setOrders] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [orders, setOrders] = useState(() => cachedCashier || []);
+  const [loading, setLoading] = useState(() => !cachedCashier);
   const [refreshing, setRefreshing] = useState(false);
   const [actionLoading, setActionLoading] = useState({});
 
@@ -40,6 +42,7 @@ export default function CashierScreen({ route }) {
         .order('created_at', { ascending: false })
         .limit(100);
 
+      mobileCache.set(`cashier_${restaurantId}`, data || []);
       setOrders(data || []);
     } catch (e) {
       console.log('Cashier load error:', e?.message);
@@ -57,7 +60,7 @@ export default function CashierScreen({ route }) {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `restaurant_id=eq.${restaurantId}` }, loadOrders)
       .subscribe();
 
-    const timer = setInterval(loadOrders, 8000);
+    const timer = setInterval(loadOrders, 30000);
     return () => { clearInterval(timer); supabase.removeChannel(sub); };
   }, [restaurantId, loadOrders]);
 

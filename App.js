@@ -1,5 +1,6 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Image } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Image } from 'react-native';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { StatusBar } from 'expo-status-bar';
@@ -24,7 +25,14 @@ import InventoryMobileScreen from './src/screens/InventoryMobileScreen';
 import MenuMobileScreen from './src/screens/MenuMobileScreen';
 import SubscriptionScreen from './src/screens/SubscriptionScreen';
 import PaymentHistoryScreen from './src/screens/PaymentHistoryScreen';
+import AttendanceMobileScreen from './src/screens/AttendanceMobileScreen';
 import { getAssignedTableIdsForWaiter } from './src/lib/tableAssignments';
+
+// Lock font scaling app-wide to prevent zoom and distortion
+if (Text.defaultProps == null) Text.defaultProps = {};
+Text.defaultProps.allowFontScaling = false;
+if (TextInput.defaultProps == null) TextInput.defaultProps = {};
+TextInput.defaultProps.allowFontScaling = false;
 
 export const navigationRef = createNavigationContainerRef();
 
@@ -187,14 +195,27 @@ export default function App() {
           globalChannel = null;
         }
 
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) return;
-        registerForPushNotificationsAsync(user.id).catch(e => console.log('[App] Push token startup registration:', e?.message));
-        const { data: p } = await supabase
-          .from('profiles')
-          .select('restaurant_id, role')
-          .eq('id', user.id)
-          .maybeSingle();
+        let p = null;
+        try {
+          const cachedRaw = await AsyncStorage.getItem('@smartdine_auth_profile');
+          if (cachedRaw) p = JSON.parse(cachedRaw);
+        } catch (_) {}
+
+        if (!p?.restaurant_id) {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (!user) return;
+          registerForPushNotificationsAsync(user.id).catch(e => console.log('[App] Push token startup registration:', e?.message));
+          const { data: fetchedP } = await supabase
+            .from('profiles')
+            .select('restaurant_id, role, department')
+            .eq('id', user.id)
+            .maybeSingle();
+          p = fetchedP;
+        } else {
+          supabase.auth.getUser().then(({ data: { user } }) => {
+            if (user?.id) registerForPushNotificationsAsync(user.id).catch(() => {});
+          }).catch(() => {});
+        }
 
         const restId = p?.restaurant_id;
         if (!restId) return;
@@ -202,7 +223,7 @@ export default function App() {
         // Fetch assigned tables for waiter
         let assignedTables = [];
         if (p.role === 'waiter') {
-          assignedTables = await getAssignedTableIdsForWaiter(restId, user.id);
+          assignedTables = await getAssignedTableIdsForWaiter(restId, p.id || user?.id);
         }
 
         globalChannel = supabase
@@ -264,22 +285,33 @@ export default function App() {
     }
     setupGlobalRealtimeListener();
 
-    // 5. Listen for sign-out to reset navigation
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+    // 5. Listen for sign-out to reset navigation (with offline & transient error protection)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event) => {
       if (event === 'SIGNED_OUT') {
-        if (globalChannel) {
-          supabase.removeChannel(globalChannel);
-          globalChannel = null;
-        }
-        try {
-          if (navigationRef.isReady()) {
-            const currentRoute = navigationRef.getCurrentRoute()?.name;
-            if (currentRoute && currentRoute !== 'Login' && currentRoute !== 'OwnerSignup') {
-              navigationRef.reset({ index: 0, routes: [{ name: 'Login' }] });
-            }
+        // Check if user explicitly logged out or if this is a transient network/refresh hiccup
+        const cachedRaw = await AsyncStorage.getItem('@smartdine_auth_profile').catch(() => null);
+        if (!cachedRaw) {
+          // Explicit logout - safely reset navigation
+          if (globalChannel) {
+            supabase.removeChannel(globalChannel);
+            globalChannel = null;
           }
-        } catch (e) {
-          console.log('[App] Nav reset error:', e?.message);
+          try {
+            if (navigationRef.isReady()) {
+              const currentRoute = navigationRef.getCurrentRoute()?.name;
+              if (currentRoute && currentRoute !== 'Login' && currentRoute !== 'OwnerSignup') {
+                navigationRef.reset({ index: 0, routes: [{ name: 'Login' }] });
+              }
+            }
+          } catch (e) {
+            console.log('[App] Nav reset error:', e?.message);
+          }
+        } else {
+          console.log('[App] Transient SIGNED_OUT event ignored. Active profile preserved in memory & storage.');
+          // Attempt silent session recovery
+          try {
+            await supabase.auth.refreshSession();
+          } catch (_) {}
         }
       } else if (event === 'SIGNED_IN') {
         setupGlobalRealtimeListener();
@@ -349,6 +381,7 @@ export default function App() {
           <Stack.Screen name="MenuManagement" component={MenuMobileScreen} />
           <Stack.Screen name="Subscription" component={SubscriptionScreen} />
           <Stack.Screen name="PaymentHistory" component={PaymentHistoryScreen} />
+          <Stack.Screen name="AttendanceMobile" component={AttendanceMobileScreen} />
         </Stack.Navigator>
       </NavigationContainer>
     </ErrorBoundary>

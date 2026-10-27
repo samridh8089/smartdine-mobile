@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Alert,
@@ -90,7 +91,8 @@ export default function AccountScreen({ route }) {
           onPress: async () => {
             setSigningOut(true);
             try {
-              await supabase.auth.signOut().catch(() => {});
+              await AsyncStorage.removeItem('@smartdine_auth_profile').catch(() => {});
+                await supabase.auth.signOut().catch(() => {});
               const keys = [
                 '@smartdine_user_session',
                 '@smartdine_kitchen_pending_queue',
