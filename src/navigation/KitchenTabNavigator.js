@@ -1,6 +1,7 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Platform } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import KitchenScreen from '../screens/KitchenScreen';
 import MenuMobileScreen from '../screens/MenuMobileScreen';
@@ -13,6 +14,8 @@ const Tab = createBottomTabNavigator();
 
 export default function KitchenTabNavigator({ route }) {
   const profile = route?.params?.profile ?? {};
+  const insets = useSafeAreaInsets();
+  const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 14 : 0);
 
   return (
     <Tab.Navigator
@@ -22,14 +25,14 @@ export default function KitchenTabNavigator({ route }) {
         tabBarInactiveTintColor: '#94a3b8',
         tabBarStyle: {
           backgroundColor: '#ffffff',
-          borderTopColor: '#f1f5f9',
+          borderTopColor: '#e2e8f0',
           borderTopWidth: 1,
-          height: Platform.OS === 'ios' ? 88 : 64,
-          paddingBottom: Platform.OS === 'ios' ? 28 : 8,
+          height: (Platform.OS === 'ios' ? 60 : 64) + bottomInset,
+          paddingBottom: bottomInset + (Platform.OS === 'ios' ? 0 : 6),
           paddingTop: 6,
-          elevation: 12,
+          elevation: 16,
           shadowColor: '#000',
-          shadowOpacity: 0.04,
+          shadowOpacity: 0.06,
           shadowRadius: 8,
         },
         tabBarLabelStyle: { ...FONTS.semiBold, fontSize: 10 },
