@@ -26,6 +26,7 @@ import MenuMobileScreen from './src/screens/MenuMobileScreen';
 import SubscriptionScreen from './src/screens/SubscriptionScreen';
 import PaymentHistoryScreen from './src/screens/PaymentHistoryScreen';
 import AttendanceMobileScreen from './src/screens/AttendanceMobileScreen';
+import OwnerWebScreen from './src/screens/OwnerWebScreen';
 import { getAssignedTableIdsForWaiter } from './src/lib/tableAssignments';
 
 // Lock font scaling app-wide to prevent zoom and distortion
@@ -167,7 +168,7 @@ export default function App() {
                   navigationRef.navigate('KitchenApp');
                   return;
                 } else if (p?.role === 'owner' || p?.role === 'manager' || p?.role === 'cashier') {
-                  navigationRef.navigate('MainApp');
+                  navigationRef.navigate('OwnerWebApp');
                   return;
                 }
               }
@@ -352,7 +353,8 @@ export default function App() {
           <Stack.Screen name="Login" component={LoginScreen} />
           <Stack.Screen name="OwnerSignup" component={OwnerSignupScreen} />
 
-          {/* Owner Portal */}
+          {/* Owner Portal (Responsive Web Dashboard) */}
+          <Stack.Screen name="OwnerWebApp" component={OwnerWebScreen} />
           <Stack.Screen name="MainApp" component={MainTabNavigator} />
 
           {/* Manager Portal */}

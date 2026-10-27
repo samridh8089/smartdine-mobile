@@ -188,13 +188,13 @@ export default function LoginScreen({ navigation }) {
         navigation.replace('SupervisorApp', { profile });
         break;
       case 'manager':
-        navigation.replace('ManagerApp', { profile });
+        navigation.replace('OwnerWebApp', { profile });
         break;
       case 'super_admin':
         navigation.replace('SuperAdmin', { profile });
         break;
       case 'owner':
-        navigation.replace('MainApp', { profile });
+        navigation.replace('OwnerWebApp', { profile });
         break;
       default:
         setErrorMsg('Your account role could not be verified. Please contact your administrator.');
