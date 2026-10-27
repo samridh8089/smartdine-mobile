@@ -132,7 +132,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#ffffff',
-    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0,
+    paddingTop: Platform.OS === 'android' ? Math.max(StatusBar.currentHeight || 0, 38) + 6 : 0,
   },
   webView: {
     flex: 1,
