@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
   ActivityIndicator, KeyboardAvoidingView, Platform,
-  ScrollView, Alert, Modal, StatusBar, Dimensions, Image, Linking
+  ScrollView, Alert, Modal, StatusBar, Dimensions, Image, Linking, Keyboard, TouchableWithoutFeedback
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, Feather, FontAwesome5 } from '@expo/vector-icons';
@@ -194,6 +194,7 @@ export default function OwnerSignupScreen({ navigation }) {
 
   // ─── STEP 1: SUBMIT OWNER DETAILS ───────────────────────────────────────────
   const handleOwnerDetailsSubmit = async () => {
+    Keyboard.dismiss();
     setErrorMsg('');
     const cleanName = fullName.trim();
     const cleanEmail = email.trim().toLowerCase();
@@ -373,6 +374,7 @@ export default function OwnerSignupScreen({ navigation }) {
 
   // ─── STEP 3: RESTAURANT SETUP SUBMIT ─────────────────────────────────────────
   const handleRestaurantSetupSubmit = () => {
+    Keyboard.dismiss();
     setErrorMsg('');
     if (!restaurantName.trim()) {
       setErrorMsg('Please enter your restaurant name.');
@@ -395,6 +397,7 @@ export default function OwnerSignupScreen({ navigation }) {
 
   // ─── STEP 4: PROCEED TO PAYMENT (REAL RAZORPAY GATEWAY OR TALK TO SALES) ──
   const handleProceedToPayment = async () => {
+    if (isProcessingPay) return;
     setPaymentFailed(false);
     setPaymentError('');
     setIsProcessingPay(true);
@@ -506,7 +509,7 @@ export default function OwnerSignupScreen({ navigation }) {
       }
 
       // 2. Open Official Real Razorpay Gateway (UPI Intent, Google Pay, PhonePe, Cards, Netbanking)
-      const checkoutUrl = `https://www.cleverops.in/checkout?orderId=${rzpOrder.order_id}&amount=${amount}&plan=${selectedPlan}&restaurantName=${encodeURIComponent(cleanRestName)}&fullName=${encodeURIComponent(cleanName)}&email=${encodeURIComponent(cleanEmail)}&phone=${encodeURIComponent(cleanPhone)}&isSignup=true&billingInterval=${billingInterval}&password=${encodeURIComponent(password)}&keyId=${rzpOrder.key || 'rzp_live_TK1Nbl3mJiENjR'}`;
+      const checkoutUrl = `https://www.cleverops.in/checkout?orderId=${rzpOrder.order_id}&amount=${amount}&plan=${selectedPlan}&restaurantName=${encodeURIComponent(cleanRestName)}&fullName=${encodeURIComponent(cleanName)}&email=${encodeURIComponent(cleanEmail)}&phone=${encodeURIComponent(cleanPhone)}&isSignup=true&billingInterval=${billingInterval}&password=${encodeURIComponent(password)}&keyId=${rzpOrder.keyId || rzpOrder.key || 'rzp_live_TsAPJepoDRq53D'}`;
 
       await Linking.openURL(checkoutUrl);
     } catch (e) {
@@ -711,7 +714,9 @@ export default function OwnerSignupScreen({ navigation }) {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#f8fafc" />
 
-      {/* Top App Header */}
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+        <View style={{ flex: 1 }}>
+          {/* Top App Header */}
       <View style={styles.header}>
         {currentStep > 1 && currentStep < 6 ? (
           <TouchableOpacity
@@ -740,9 +745,11 @@ export default function OwnerSignupScreen({ navigation }) {
         style={{ flex: 1 }}
       >
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
+          contentContainerStyle={[styles.scrollContent, { flexGrow: 1, paddingBottom: 340 }]}
+          showsVerticalScrollIndicator={true}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          nestedScrollEnabled={true}
         >
           {errorMsg ? (
             <View style={styles.errorBanner}>
@@ -994,7 +1001,10 @@ export default function OwnerSignupScreen({ navigation }) {
                       <TouchableOpacity
                         key={t.label}
                         style={[styles.typeCard, isSelected && styles.typeCardSelected]}
-                        onPress={() => setRestaurantType(t.label)}
+                        onPress={() => {
+                          Keyboard.dismiss();
+                          setRestaurantType(t.label);
+                        }}
                       >
                         <MaterialCommunityIcons
                           name={t.icon}
@@ -1020,6 +1030,7 @@ export default function OwnerSignupScreen({ navigation }) {
                     placeholder="e.g. Mumbai / Delhi / Bengaluru"
                     placeholderTextColor="#94a3b8"
                     value={city}
+                    returnKeyType="next"
                     onChangeText={setCity}
                   />
                 </View>
@@ -1034,6 +1045,8 @@ export default function OwnerSignupScreen({ navigation }) {
                     placeholder="Shop No. 12, Main Road, Market Area"
                     placeholderTextColor="#94a3b8"
                     value={address}
+                    returnKeyType="done"
+                    onSubmitEditing={() => Keyboard.dismiss()}
                     onChangeText={setAddress}
                   />
                 </View>
@@ -1171,13 +1184,26 @@ export default function OwnerSignupScreen({ navigation }) {
                   </TouchableOpacity>
                 ) : (
                   <TouchableOpacity
-                    style={styles.primaryBtn}
+                    style={[styles.primaryBtn, isProcessingPay && { opacity: 0.75 }]}
                     onPress={handleProceedToPayment}
+                    disabled={isProcessingPay}
+                    activeOpacity={0.7}
                   >
-                    <Text style={styles.primaryBtnText}>
-                      Proceed to Razorpay Checkout (₹{activePrice})
-                    </Text>
-                    <Ionicons name="arrow-forward" size={18} color="#ffffff" style={{ marginLeft: 6 }} />
+                    {isProcessingPay ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+                        <ActivityIndicator size="small" color="#ffffff" style={{ marginRight: 8 }} />
+                        <Text style={styles.primaryBtnText}>
+                          Opening Razorpay Secure Checkout...
+                        </Text>
+                      </View>
+                    ) : (
+                      <>
+                        <Text style={styles.primaryBtnText}>
+                          Proceed to Razorpay Checkout (₹{activePrice})
+                        </Text>
+                        <Ionicons name="arrow-forward" size={18} color="#ffffff" style={{ marginLeft: 6 }} />
+                      </>
+                    )}
                   </TouchableOpacity>
                 );
               })()}
@@ -1245,7 +1271,9 @@ export default function OwnerSignupScreen({ navigation }) {
             </View>
           )}
         </ScrollView>
-      </KeyboardAvoidingView>
+          </KeyboardAvoidingView>
+        </View>
+      </TouchableWithoutFeedback>
 
       {/* ═══════════════════════════════════════════════════════════════════
           RAZORPAY PAYMENT MODAL (MATCHING REFERENCE DESIGN)
@@ -1548,7 +1576,8 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 16,
-    paddingBottom: 40,
+    paddingBottom: 340,
+    flexGrow: 1,
   },
   errorBanner: {
     flexDirection: 'row',

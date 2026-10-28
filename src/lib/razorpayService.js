@@ -7,7 +7,7 @@
 import { supabase } from './supabase';
 import { CONFIG } from '../shared/config';
 
-const RAZORPAY_KEY_ID = 'rzp_live_TK1Nbl3mJiENjR';
+const RAZORPAY_KEY_ID = 'rzp_live_TsAPJepoDRq53D';
 const RAZORPAY_KEY_SECRET = 'q4cHg1f0yDQwwLbaUsgKhIBJ';
 
 // Pure JS Base64 Encoder compatible with Hermes / React Native
@@ -161,63 +161,56 @@ export function calculateRazorpayHmac(orderId, paymentId, secret = RAZORPAY_KEY_
 /**
  * Creates a Razorpay Order
  */
-export async function createRazorpayOrder({ amount, currency = 'INR', plan, restaurantName, restaurantId, billingInterval = 'monthly' }) {
+export async function createRazorpayOrder({ amount, currency = 'INR', plan, restaurantName, restaurantId, email, billingInterval = 'monthly', isUpgrade = false }) {
   try {
-    const amountInPaise = Math.round(Number(amount) * 100);
-    const receiptId = `rcpt_${(restaurantName || restaurantId || 'rest').slice(0, 8).replace(/[^a-zA-Z0-9]/g, '')}_${Date.now().toString().slice(-6)}`;
-
-    const basicAuth = toBase64(`${RAZORPAY_KEY_ID}:${RAZORPAY_KEY_SECRET}`);
-
-    const response = await fetch('https://api.razorpay.com/v1/orders', {
+    const apiHost = CONFIG?.API_BASE_URL || 'https://www.cleverops.in';
+    const res = await fetch(`${apiHost}/api/payments/create-order`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Basic ${basicAuth}`
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        amount: amountInPaise,
+        amount,
         currency,
-        receipt: receiptId,
-        notes: {
-          restaurant_name: restaurantName || '',
-          restaurant_id: restaurantId || '',
-          plan_id: plan || '',
-          billing_interval: billingInterval || 'monthly'
-        }
+        plan,
+        restaurantName,
+        restaurantId,
+        email,
+        billingInterval,
+        isUpgrade
       })
     });
 
-    if (response.ok) {
-      const order = await response.json();
-      console.log('[Razorpay Order Created]:', order.id, 'Amount:', order.amount);
+    const data = await res.json();
+    if (res.ok && data.success && data.order_id) {
+      console.log('[Razorpay Order Created on Server]:', data.order_id, 'Amount:', data.amount);
       return {
         success: true,
-        order_id: order.id,
-        amount: order.amount,
-        currency: order.currency,
-        key: RAZORPAY_KEY_ID
+        order_id: data.order_id,
+        amount: data.amount,
+        currency: data.currency || 'INR',
+        key: data.key || data.keyId || 'rzp_live_TsAPJepoDRq53D',
+        keyId: data.keyId || data.key || 'rzp_live_TsAPJepoDRq53D',
+        restaurantId: data.restaurantId
       };
     }
-  } catch (err) {
-    console.log('[Razorpay API direct error]:', err?.message);
-  }
 
-  // Standalone Order Fallback
-  const fallbackOrderId = `order_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
-  return {
-    success: true,
-    order_id: fallbackOrderId,
-    amount: Math.round(Number(amount) * 100),
-    currency: 'INR',
-    key: RAZORPAY_KEY_ID
-  };
+    if (data.code === 'RESTAURANT_ALREADY_EXISTS' || (data.error && data.error.includes('already owns'))) {
+      return {
+        success: false,
+        code: 'RESTAURANT_ALREADY_EXISTS',
+        error: data.error,
+        existingRestaurant: data.existingRestaurant
+      };
+    }
+
+    throw new Error(data.error || 'Failed to create payment order on server');
+  } catch (err) {
+    console.warn('[createRazorpayOrder Server Error]:', err?.message);
+    throw err;
+  }
 }
 
 /**
- * Complete Verified Onboarding: Submits signed payment details to backend
- * Restaurant is ONLY created on backend upon successful cryptographic HMAC verification.
- */
-export async function completeVerifiedOnboarding(payload) {
+ export async function completeVerifiedOnboarding(payload) {
   const endpoint = `${CONFIG.API_BASE_URL || 'https://www.cleverops.in'}/api/auth/onboarding-provision`;
   
   const res = await fetch(endpoint, {
