@@ -509,7 +509,7 @@ export default function OwnerSignupScreen({ navigation }) {
       }
 
       // 2. Open Official Real Razorpay Gateway (UPI Intent, Google Pay, PhonePe, Cards, Netbanking)
-      const checkoutUrl = `https://www.cleverops.in/checkout?orderId=${rzpOrder.order_id}&amount=${amount}&plan=${selectedPlan}&restaurantName=${encodeURIComponent(cleanRestName)}&fullName=${encodeURIComponent(cleanName)}&email=${encodeURIComponent(cleanEmail)}&phone=${encodeURIComponent(cleanPhone)}&isSignup=true&billingInterval=${billingInterval}&password=${encodeURIComponent(password)}&keyId=${rzpOrder.keyId || rzpOrder.key || 'rzp_live_TsAPJepoDRq53D'}`;
+      const checkoutUrl = `https://www.cleverops.in/checkout?orderId=${rzpOrder.order_id}&amount=${amount}&plan=${selectedPlan}&restaurantName=${encodeURIComponent(cleanRestName)}&fullName=${encodeURIComponent(cleanName)}&email=${encodeURIComponent(cleanEmail)}&phone=${encodeURIComponent(cleanPhone)}&isSignup=true&billingInterval=${billingInterval}&password=${encodeURIComponent(password)}&restaurantType=${encodeURIComponent(restaurantType || 'Restaurant')}&city=${encodeURIComponent(city || '')}&address=${encodeURIComponent(address || '')}&slug=${encodeURIComponent(cleanSlug)}&gstNumber=${encodeURIComponent(gstNumber || '')}&fssaiNumber=${encodeURIComponent(fssaiNumber || '')}&keyId=${rzpOrder.keyId || rzpOrder.key || 'rzp_live_TsAPJepoDRq53D'}`;
 
       await Linking.openURL(checkoutUrl);
     } catch (e) {
