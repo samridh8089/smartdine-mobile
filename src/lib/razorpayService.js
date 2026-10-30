@@ -161,7 +161,7 @@ export function calculateRazorpayHmac(orderId, paymentId, secret = RAZORPAY_KEY_
 /**
  * Creates a Razorpay Order
  */
-export async function createRazorpayOrder({ amount, currency = 'INR', plan, restaurantName, restaurantId, email, billingInterval = 'monthly', isUpgrade = false }) {
+export async function createRazorpayOrder({ amount, currency = 'INR', plan, restaurantName, restaurantId, email, billingInterval = 'monthly', isUpgrade = false, fullName, phone, password, restaurantType, city, address, slug }) {
   try {
     const apiHost = CONFIG?.API_BASE_URL || 'https://www.cleverops.in';
     const res = await fetch(`${apiHost}/api/payments/create-order`, {
@@ -175,7 +175,14 @@ export async function createRazorpayOrder({ amount, currency = 'INR', plan, rest
         restaurantId,
         email,
         billingInterval,
-        isUpgrade
+        isUpgrade,
+        fullName,
+        phone,
+        password,
+        restaurantType,
+        city,
+        address,
+        slug
       })
     });
 

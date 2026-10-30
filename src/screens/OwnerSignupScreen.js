@@ -490,7 +490,14 @@ export default function OwnerSignupScreen({ navigation }) {
         plan: selectedPlan,
         restaurantName: cleanRestName,
         email: cleanEmail,
-        billingInterval
+        billingInterval,
+        fullName: cleanName,
+        phone: cleanPhone,
+        password: password,
+        restaurantType,
+        city,
+        address,
+        slug: cleanSlug
       });
 
       if (rzpOrder?.code === 'RESTAURANT_ALREADY_EXISTS' || rzpOrder?.error?.includes('already owns')) {
