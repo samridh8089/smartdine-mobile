@@ -12,12 +12,13 @@ import { COLORS } from '../lib/theme';
 import { registerForPushNotificationsAsync } from '../lib/notifications';
 import * as Updates from 'expo-updates';
 
-export default function LoginScreen({ navigation }) {
+export default function LoginScreen({ navigation, route }) {
+  const skipSplash = route?.params?.skipSplash === true;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [checkingSession, setCheckingSession] = useState(true);
+  const [checkingSession, setCheckingSession] = useState(!skipSplash);
   const [errorMsg, setErrorMsg] = useState('');
 
   // Forgot password modal state
@@ -29,8 +30,8 @@ export default function LoginScreen({ navigation }) {
   const [unverifiedEmail, setUnverifiedEmail] = useState('');
   const [resendingVerification, setResendingVerification] = useState(false);
 
-  const fadeAnim = useState(new Animated.Value(0))[0];
-  const slideAnim = useState(new Animated.Value(30))[0];
+  const fadeAnim = useState(new Animated.Value(1))[0];
+  const slideAnim = useState(new Animated.Value(0))[0];
 
   const handleResendVerificationEmail = async () => {
     const target = (unverifiedEmail || email).trim().toLowerCase();
@@ -69,35 +70,32 @@ export default function LoginScreen({ navigation }) {
 
   async function checkExistingSession() {
     try {
-      // 1. Instant launch check from cached profile in AsyncStorage (<50ms!)
+      // 1. Check active Supabase session first (<15ms local AsyncStorage lookup)
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (!session?.user?.id) {
+        // No active session — purge stale cached profile so we don't route to an unauthenticated screen
+        await AsyncStorage.removeItem('@smartdine_auth_profile').catch(() => {});
+        setCheckingSession(false);
+        animateIn();
+        return;
+      }
+
+      // 2. Active session exists: fast launch from cached profile
       const cachedProfileRaw = await AsyncStorage.getItem('@smartdine_auth_profile');
       if (cachedProfileRaw) {
         try {
           const cachedProfile = JSON.parse(cachedProfileRaw);
-          if (cachedProfile?.id && cachedProfile?.role) {
-            navigateByRole(cachedProfile.role, cachedProfile);
-            // Proactive silent token refresh without nuking profile cache
-            supabase.auth.getSession().then(async ({ data: { session } }) => {
-              if (!session?.user?.id) {
-                // Try silent session refresh instead of deleting profile
-                try {
-                  const { data: refreshData } = await supabase.auth.refreshSession();
-                  if (refreshData?.session?.user) {
-                    console.log('[LoginScreen] Session silently refreshed on launch.');
-                  }
-                } catch (_) {}
-              }
-            }).catch(() => {});
+          if (cachedProfile?.id === session.user.id && cachedProfile?.role) {
+            navigateByRole(cachedProfile.role, cachedProfile, session);
             return;
           }
         } catch (_) {}
       }
 
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user?.id) {
-        await fetchProfileAndNavigate(session.user.id);
-        return;
-      }
+      // 3. Fallback: fetch profile from Supabase and navigate
+      await fetchProfileAndNavigate(session.user.id, session);
+      return;
     } catch (e) {
       console.log('[LoginScreen] session check error:', e?.message);
     }
@@ -105,7 +103,7 @@ export default function LoginScreen({ navigation }) {
     animateIn();
   }
 
-  async function fetchProfileAndNavigate(userId) {
+  async function fetchProfileAndNavigate(userId, session = null) {
     try {
       const { data: profile, error } = await supabase
         .from('profiles')
@@ -151,7 +149,7 @@ export default function LoginScreen({ navigation }) {
         registerForPushNotificationsAsync(userId).catch(() => {});
       }, 500);
 
-      navigateByRole(profile.role, profile);
+      navigateByRole(profile.role, profile, session);
     } catch (e) {
       console.log('[LoginScreen] profile fetch error:', e?.message);
       setCheckingSession(false);
@@ -162,8 +160,7 @@ export default function LoginScreen({ navigation }) {
     }
   }
 
-  function navigateByRole(role, profile) {
-    setCheckingSession(false);
+  function navigateByRole(role, profile, session = null) {
     if (profile?.id && role) {
       AsyncStorage.setItem('@smartdine_auth_profile', JSON.stringify(profile)).catch(() => {});
     }
@@ -188,17 +185,19 @@ export default function LoginScreen({ navigation }) {
         navigation.replace('SupervisorApp', { profile });
         break;
       case 'manager':
-        navigation.replace('OwnerWebApp', { profile });
+        navigation.replace('OwnerWebApp', { profile, sessionJson: session ? JSON.stringify(session) : undefined });
         break;
       case 'super_admin':
         navigation.replace('SuperAdmin', { profile });
         break;
       case 'owner':
-        navigation.replace('OwnerWebApp', { profile });
+        navigation.replace('OwnerWebApp', { profile, sessionJson: session ? JSON.stringify(session) : undefined });
         break;
       default:
+        setCheckingSession(false);
         setErrorMsg('Your account role could not be verified. Please contact your administrator.');
         Alert.alert('Role Unassigned', 'Your account role could not be verified. Please contact your administrator.');
+        animateIn();
         break;
     }
   }
@@ -238,7 +237,7 @@ export default function LoginScreen({ navigation }) {
       }
 
       if (data?.user) {
-        await fetchProfileAndNavigate(data.user.id);
+        await fetchProfileAndNavigate(data.user.id, data.session);
       } else {
         const failMsg = 'Login failed. Please try again.';
         setErrorMsg(failMsg);
@@ -281,13 +280,13 @@ export default function LoginScreen({ navigation }) {
   if (checkingSession) {
     return (
       <View style={styles.splashContainer}>
-        <StatusBar barStyle="light-content" backgroundColor={COLORS.primary} />
+        <StatusBar barStyle="dark-content" backgroundColor="#f8fafc" />
         <View style={styles.splashLogoCircle}>
           <Image source={require('../../assets/logo.png')} style={{ width: 56, height: 56, resizeMode: 'contain' }} />
         </View>
         <Text style={styles.splashTitle}>CleverOps</Text>
-        <Text style={styles.splashSubtitle}>Staff & Operations Portal</Text>
-        <ActivityIndicator color="#ffffff" size="large" style={{ marginTop: 32 }} />
+        <Text style={styles.splashSubtitle}>Smart Restaurant Operations</Text>
+        <ActivityIndicator color="#059669" size="large" style={{ marginTop: 24 }} />
       </View>
     );
   }
@@ -490,7 +489,7 @@ export default function LoginScreen({ navigation }) {
               </View>
             </Animated.View>
 
-            <Text style={styles.footerText}>Powered by CleverOps · cleverops.in</Text>
+            <Text style={styles.footerText}>Powered by CleverOps · v2.2.0 · cleverops.in</Text>
           </ScrollView>
         </TouchableWithoutFeedback>
       </KeyboardAvoidingView>
@@ -549,37 +548,38 @@ export default function LoginScreen({ navigation }) {
 const styles = StyleSheet.create({
   splashContainer: {
     flex: 1,
-    backgroundColor: COLORS.primary,
+    backgroundColor: '#f8fafc',
     alignItems: 'center',
     justifyContent: 'center',
   },
   splashLogoCircle: {
-    width: 84,
-    height: 84,
-    borderRadius: 42,
+    width: 80,
+    height: 80,
+    borderRadius: 40,
     backgroundColor: '#ffffff',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 16,
     overflow: 'hidden',
-    elevation: 8,
+    elevation: 3,
     shadowColor: '#000000',
-    shadowOpacity: 0.2,
-    shadowRadius: 10,
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
   },
   splashLogoImage: {
-    width: 68,
-    height: 68,
+    width: 60,
+    height: 60,
   },
   splashTitle: {
-    fontSize: 30,
-    fontWeight: '700',
-    color: '#ffffff',
-    letterSpacing: 1,
+    fontSize: 26,
+    fontWeight: '800',
+    color: '#0f172a',
+    letterSpacing: 0.5,
   },
   splashSubtitle: {
     fontSize: 13,
-    color: 'rgba(255,255,255,0.75)',
+    color: '#64748b',
+    fontWeight: '600',
     marginTop: 4,
   },
   container: {

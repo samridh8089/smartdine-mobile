@@ -227,6 +227,7 @@ export default function App() {
           assignedTables = await getAssignedTableIdsForWaiter(restId, p.id || user?.id);
         }
 
+
         globalChannel = supabase
           .channel(`global-app-events-${restId}`)
           .on('postgres_changes', {
@@ -273,11 +274,8 @@ export default function App() {
           })
           .on('postgres_changes', {
             event: 'UPDATE', schema: 'public', table: 'restaurants', filter: `id=eq.${restId}`,
-          }, async (payload) => {
-            console.log('[App Global] Restaurant plan updated in realtime:', payload.new?.subscription_plan, payload.new?.subscription_status);
-            if (payload.new?.subscription_plan) {
-              sendLocalNotification('🎉 Plan Activated', `Your restaurant subscription is now ${payload.new.subscription_plan.toUpperCase()} (${(payload.new.subscription_status || 'active').toUpperCase()})`, 'smartdine_waiter');
-            }
+          }, (payload) => {
+            console.log('[App Global] Restaurant row updated in realtime:', payload.new?.id);
           })
           .subscribe();
       } catch (e) {
@@ -301,7 +299,7 @@ export default function App() {
             if (navigationRef.isReady()) {
               const currentRoute = navigationRef.getCurrentRoute()?.name;
               if (currentRoute && currentRoute !== 'Login' && currentRoute !== 'OwnerSignup') {
-                navigationRef.reset({ index: 0, routes: [{ name: 'Login' }] });
+                navigationRef.reset({ index: 0, routes: [{ name: 'Login', params: { skipSplash: true } }] });
               }
             }
           } catch (e) {
@@ -347,7 +345,7 @@ export default function App() {
       <NavigationContainer ref={navigationRef}>
         <Stack.Navigator
           initialRouteName="Login"
-          screenOptions={{ headerShown: false, animation: 'fade' }}
+          screenOptions={{ headerShown: false, animation: 'none' }}
         >
           {/* Auth */}
           <Stack.Screen name="Login" component={LoginScreen} />

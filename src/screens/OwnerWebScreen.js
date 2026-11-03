@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useMemo } from 'react';
 import {
   View,
   StyleSheet,
@@ -14,35 +14,38 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
 
 const DASHBOARD_URL = 'https://www.cleverops.in/dashboard';
+const WEBVIEW_SOURCE = { uri: DASHBOARD_URL };
 
 export default function OwnerWebScreen({ navigation, route }) {
   const profile = route?.params?.profile || {};
   const webViewRef = useRef(null);
-  const [canGoBack, setCanGoBack] = useState(false);
-  const [sessionJson, setSessionJson] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const canGoBackRef = useRef(false);
+  const [sessionJson, setSessionJson] = useState(route?.params?.sessionJson || null);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
 
-  // 1. Fetch current active Supabase session to inject into WebView
+  // 1. Fetch active Supabase session if not passed via navigation params
   useEffect(() => {
-    async function loadSession() {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session) {
-          setSessionJson(JSON.stringify(session));
+    if (!sessionJson) {
+      async function loadSession() {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (session) {
+            setSessionJson(JSON.stringify(session));
+          }
+        } catch (err) {
+          console.log('[OwnerWebScreen] session fetch warning:', err?.message);
         }
-      } catch (err) {
-        console.log('[OwnerWebScreen] session fetch warning:', err?.message);
       }
+      loadSession();
     }
-    loadSession();
-  }, []);
+  }, [sessionJson]);
 
-  // 2. Hardware Back Button handler on Android
+  // 2. Hardware Back Button handler on Android (reads ref directly to avoid re-renders)
   useEffect(() => {
     if (Platform.OS !== 'android') return;
 
     const onBackPress = () => {
-      if (canGoBack && webViewRef.current) {
+      if (canGoBackRef.current && webViewRef.current) {
         webViewRef.current.goBack();
         return true;
       }
@@ -60,10 +63,19 @@ export default function OwnerWebScreen({ navigation, route }) {
 
     const backHandler = BackHandler.addEventListener('hardwareBackPress', onBackPress);
     return () => backHandler.remove();
-  }, [canGoBack]);
+  }, []);
 
-  // 3. Pre-inject session token before page loads
-  const injectedAuthScript = `
+  // Clean sign-out and return to Login without splash flicker
+  const handleSignOutAndReset = async () => {
+    try {
+      await AsyncStorage.removeItem('@smartdine_auth_profile').catch(() => {});
+      await supabase.auth.signOut().catch(() => {});
+      navigation.reset({ index: 0, routes: [{ name: 'Login', params: { skipSplash: true } }] });
+    } catch (_) {}
+  };
+
+  // 3. Pre-inject session token before page loads (memoized so script reference is stable)
+  const injectedAuthScript = useMemo(() => `
     (function() {
       try {
         ${sessionJson ? `
@@ -77,16 +89,14 @@ export default function OwnerWebScreen({ navigation, route }) {
       } catch(e) {}
     })();
     true;
-  `;
+  `, [sessionJson]);
 
   // 4. Handle messages from web app (e.g. sign out)
   const handleMessage = async (event) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
       if (data?.type === 'SIGN_OUT') {
-        await AsyncStorage.removeItem('@smartdine_auth_profile').catch(() => {});
-        await supabase.auth.signOut().catch(() => {});
-        navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+        await handleSignOutAndReset();
       }
     } catch (_) {}
   };
@@ -96,30 +106,31 @@ export default function OwnerWebScreen({ navigation, route }) {
       <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
       <WebView
         ref={webViewRef}
-        source={{ uri: DASHBOARD_URL }}
+        source={WEBVIEW_SOURCE}
         injectedJavaScriptBeforeContentLoaded={injectedAuthScript}
         onNavigationStateChange={(navState) => {
-          setCanGoBack(navState.canGoBack);
-          // If web app redirects to /login, route to native Login
+          canGoBackRef.current = !!navState.canGoBack;
+          // If web app redirects to /login, route cleanly to native Login
           if (navState.url && navState.url.includes('/login') && !navState.loading) {
-            navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+            handleSignOutAndReset();
           }
         }}
-        onLoadEnd={() => setIsLoading(false)}
+        onLoadEnd={() => setIsInitialLoading(false)}
         onMessage={handleMessage}
         javaScriptEnabled={true}
         domStorageEnabled={true}
         sharedCookiesEnabled={true}
         thirdPartyCookiesEnabled={true}
         allowsBackForwardNavigationGestures={true}
-        pullToRefreshEnabled={true}
+        pullToRefreshEnabled={false}
+        androidLayerType="hardware"
         showsVerticalScrollIndicator={false}
         showsHorizontalScrollIndicator={false}
         overScrollMode="never"
         bounces={false}
         style={styles.webView}
       />
-      {isLoading && (
+      {isInitialLoading && (
         <View style={styles.loadingOverlay}>
           <ActivityIndicator size="large" color="#059669" />
         </View>
