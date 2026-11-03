@@ -155,14 +155,27 @@ export async function registerForPushNotificationsAsync(userId) {
     console.log('[NotificationDiagnostics] user ID exists:', userId ? 'YES' : 'NO');
 
     if (userId) {
-      const { data: prof } = await supabase.from('profiles').select('restaurant_id, role').eq('id', userId).maybeSingle();
+      const { data: prof } = await supabase.from('profiles').select('push_token, restaurant_id, role').eq('id', userId).maybeSingle();
       console.log('[NotificationDiagnostics] restaurant ID exists:', prof?.restaurant_id ? 'YES' : 'NO');
       console.log('[NotificationDiagnostics] role:', prof?.role || 'N/A');
+
+      let tokenToPersist = token;
+      if (prof?.push_token && prof.push_token.startsWith('{')) {
+        try {
+          const parsed = JSON.parse(prof.push_token);
+          if (parsed.web || parsed.endpoint) {
+            tokenToPersist = JSON.stringify({
+              web: parsed.web || parsed,
+              mobile: token
+            });
+          }
+        } catch (_) {}
+      }
 
       const { error: dbErr } = await supabase
         .from('profiles')
         .update({
-          push_token: token,
+          push_token: tokenToPersist,
           updated_at: new Date().toISOString()
         })
         .eq('id', userId);

@@ -1,10 +1,42 @@
 import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
 import { Vibration, Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Asset } from 'expo-asset';
 
 const activeSounds = {};
 let audioConfigured = false;
 let preloadedSoundAsset = null;
+
+let isMutedGlobal = false;
+let isMutedLoaded = false;
+
+export async function isAlarmMuted() {
+  if (!isMutedLoaded) {
+    try {
+      const stored = await AsyncStorage.getItem('@cleverops_bell_muted');
+      if (stored !== null) {
+        isMutedGlobal = stored === 'true';
+      }
+    } catch (_) {}
+    isMutedLoaded = true;
+  }
+  return isMutedGlobal;
+}
+
+export function isAlarmMutedSync() {
+  return isMutedGlobal;
+}
+
+export async function setAlarmMuted(muted) {
+  isMutedGlobal = Boolean(muted);
+  isMutedLoaded = true;
+  try {
+    await AsyncStorage.setItem('@cleverops_bell_muted', muted ? 'true' : 'false');
+  } catch (_) {}
+  if (muted) {
+    stopAllAlarms();
+  }
+}
 
 async function configureAudio() {
   try {
@@ -35,6 +67,12 @@ async function getSoundSource() {
 
 export async function startAlarm(type = 'default', title = '', body = '') {
   try {
+    const muted = await isAlarmMuted();
+    if (muted) {
+      console.log(`[AlarmManager] Sound skipped: Bell is muted globally (${type})`);
+      return;
+    }
+
     console.log(`[AlarmManagerDiagnostics] startAlarm called for type: ${type}`);
     await configureAudio();
 

@@ -1,5 +1,5 @@
 import { getFormattedOrderId } from '../lib/orderUtils';
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   ActivityIndicator, RefreshControl, Platform, Alert,
@@ -30,6 +30,7 @@ export default function CashierScreen({ route }) {
   const [isSplitting, setIsSplitting] = useState(false);
   const [paymentMode, setPaymentMode] = useState('cash'); // 'cash' | 'upi' | 'card'
   const [settling, setSettling] = useState(false);
+  const isSettlingRef = useRef(false);
 
   const loadOrders = useCallback(async () => {
     if (!restaurantId) { setLoading(false); return; }

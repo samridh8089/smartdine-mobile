@@ -1,1 +1,8 @@
-export { startAlarm, stopAlarm, stopAllAlarms } from '../shared/audio/alarmManager';
+export {
+  startAlarm,
+  stopAlarm,
+  stopAllAlarms,
+  isAlarmMuted,
+  isAlarmMutedSync,
+  setAlarmMuted
+} from '../shared/audio/alarmManager';

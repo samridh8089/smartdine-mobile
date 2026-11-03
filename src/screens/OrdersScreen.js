@@ -59,6 +59,8 @@ export default function OrdersScreen({ route }) {
   const selectedDateRef = useRef(selectedDate);
   const knownReadyIds = useRef(new Set());
   const knownCallIds = useRef(new Set());
+  const isInitialOrdersLoadDone = useRef(false);
+  const isInitialCallsLoadDone = useRef(false);
   const optimisticOrderUpdates = useRef(new Map()); // Map<orderId, { status: string, timestamp: number }>
 
   // ─── 3. useCallback Declarations ──────────────────────────────────────
@@ -137,9 +139,12 @@ export default function OrdersScreen({ route }) {
       readyOrders.forEach(o => {
         if (!knownReadyIds.current.has(o.id)) {
           knownReadyIds.current.add(o.id);
-          hasNewReady = true;
+          if (isInitialOrdersLoadDone.current) {
+            hasNewReady = true;
+          }
         }
       });
+      isInitialOrdersLoadDone.current = true;
       if (hasNewReady && ['owner', 'manager', 'waiter'].includes(role)) {
         startAlarm('food_ready', 'Order Ready', 'Food is ready for pickup');
         Vibration.vibrate([0, 500, 250, 500]);
@@ -227,9 +232,12 @@ export default function OrdersScreen({ route }) {
       allCalls.forEach(c => {
         if (!knownCallIds.current.has(c.id)) {
           knownCallIds.current.add(c.id);
-          hasNew = true;
+          if (isInitialCallsLoadDone.current) {
+            hasNew = true;
+          }
         }
       });
+      isInitialCallsLoadDone.current = true;
       if (hasNew && ['owner', 'manager', 'waiter'].includes(role)) {
         startAlarm('waiter_call', 'Customer Call', 'A customer needs assistance');
         Vibration.vibrate([0, 300, 200, 300]);

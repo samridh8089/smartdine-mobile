@@ -13,7 +13,7 @@ import * as Updates from 'expo-updates';
 import { supabase } from '../lib/supabase';
 import { fetchWithAuth } from '../lib/apiClient';
 import { CONFIG } from '../shared/config';
-import { startAlarm, stopAlarm, stopAllAlarms, playAlertLoop, muteAllAlarms } from '../lib/alarmManager';
+import { startAlarm, stopAlarm, stopAllAlarms, playAlertLoop, muteAllAlarms, isAlarmMuted, setAlarmMuted } from '../lib/alarmManager';
 import { unregisterPushToken, sendLocalNotification } from '../lib/notifications';
 import {
   COLORS, FONTS, RADIUS, SHADOWS, timeAgo, formatCurrency,
@@ -55,6 +55,7 @@ export default function KitchenScreen({ route }) {
 
   // ─── 2. useRef Declarations ───────────────────────────────────────────
   const knownNewIds = useRef(new Set());
+  const isInitialLoadDone = useRef(false);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const optimisticBatches = useRef(new Map()); // Map<batchId, { status: string, staffName?: string, timestamp: number }>
 
@@ -148,9 +149,12 @@ export default function KitchenScreen({ route }) {
       newB.forEach(b => {
         if (!knownNewIds.current.has(b.id)) {
           knownNewIds.current.add(b.id);
-          hasNew = true;
+          if (isInitialLoadDone.current) {
+            hasNew = true;
+          }
         }
       });
+      isInitialLoadDone.current = true;
       if (hasNew && bellOn) {
         setHasNewOrder(true);
         startAlarm('new_order', '🔔 New Kitchen Order!', 'A new order needs kitchen attention');
@@ -239,6 +243,7 @@ export default function KitchenScreen({ route }) {
 
   // Load offline queue on init & purge stale broken items
   useEffect(() => {
+    isAlarmMuted().then(muted => setBellOn(!muted));
     async function loadPendingQueue() {
       try {
         const stored = await AsyncStorage.getItem(PENDING_QUEUE_STORAGE_KEY);
@@ -726,9 +731,10 @@ export default function KitchenScreen({ route }) {
 
         <TouchableOpacity
           style={[styles.bellBtn, bellOn ? styles.bellBtnOn : styles.bellBtnOff, { marginRight: 8 }]}
-          onPress={() => {
+          onPress={async () => {
             const nextVal = !bellOn;
             setBellOn(nextVal);
+            await setAlarmMuted(!nextVal);
             if (!nextVal) {
               stopAllAlarms();
               stopAlarm('new_order');

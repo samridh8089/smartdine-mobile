@@ -58,6 +58,7 @@ export default function WaiterCallsScreen({ route }) {
   const [pendingQueue, setPendingQueue] = useState([]);
 
   const knownCallIds = useRef(new Set());
+  const isInitialLoadDone = useRef(false);
 
   // Load table assignments for this waiter
   const loadAssignedTables = useCallback(async () => {
@@ -110,9 +111,12 @@ export default function WaiterCallsScreen({ route }) {
       pendingCalls.forEach(c => {
         if (!knownCallIds.current.has(c.id)) {
           knownCallIds.current.add(c.id);
-          hasNew = true;
+          if (isInitialLoadDone.current) {
+            hasNew = true;
+          }
         }
       });
+      isInitialLoadDone.current = true;
       if (hasNew) {
         startAlarm('waiter_call', '🔔 Customer Call', 'A customer needs assistance');
         Vibration.vibrate([0, 400, 200, 400]);

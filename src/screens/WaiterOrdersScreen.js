@@ -71,6 +71,7 @@ export default function WaiterOrdersScreen({ route }) {
   const [actionProcessing, setActionProcessing] = useState(false);
 
   const knownReadyIds = useRef(new Set());
+  const isInitialLoadDone = useRef(false);
 
   // Load table assignments and live status for this waiter
   const loadAssignedTables = useCallback(async () => {
@@ -131,9 +132,12 @@ export default function WaiterOrdersScreen({ route }) {
       readyList.forEach(o => {
         if (!knownReadyIds.current.has(o.id)) {
           knownReadyIds.current.add(o.id);
-          hasNew = true;
+          if (isInitialLoadDone.current) {
+            hasNew = true;
+          }
         }
       });
+      isInitialLoadDone.current = true;
       if (hasNew) {
         startAlarm('food_ready', 'Order Ready for Pickup', 'Food is ready to serve');
         sendLocalNotification('Order Ready for Pickup', 'Food is ready to serve to table');

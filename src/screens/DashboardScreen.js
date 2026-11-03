@@ -14,7 +14,7 @@ import {
   formatCurrency, timeAgo, getStatusColor, getStatusLabel,
 } from '../lib/theme';
 
-import { stopAllAlarms } from '../lib/alarmManager';
+import { stopAllAlarms, setAlarmMuted, isAlarmMuted } from '../lib/alarmManager';
 import { unregisterPushToken } from '../lib/notifications';
 import { fetchLiveTableStatus } from '../lib/tableAssignments';
 import { mobileCache } from '../lib/mobileCache';
@@ -463,6 +463,7 @@ function convertUnitToItemBase(reqQty, reqUnit, baseUnit) {
   const handleToggleBell = async () => {
     const nextBell = !bellOn;
     setBellOn(nextBell);
+    await setAlarmMuted(!nextBell);
     if (!nextBell) {
       stopAllAlarms();
     }
