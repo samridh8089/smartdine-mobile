@@ -231,8 +231,7 @@ export default function ReportsScreen({ route }) {
       <View style={styles.header}>
         <View>
           <Text style={styles.title}>Reports & Analytics</Text>
-          <Text style={styles.subTitle}>Business overview & financial performance</Text>
-        </View>
+                  </View>
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rangeScroll}>
           {[

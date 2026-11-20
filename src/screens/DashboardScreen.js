@@ -595,8 +595,7 @@ function convertUnitToItemBase(reqQty, reqUnit, baseUnit) {
             <Text style={styles.metricValue}>
               {completedOrdersCount > 0 ? formatCurrency(totalRevenue / completedOrdersCount) : '₹0'}
             </Text>
-            <Text style={styles.metricSub}>Per closed ticket</Text>
-          </View>
+                      </View>
         </View>
 
         {/* Operations Hub 2x2 Responsive Grid */}
@@ -607,23 +606,19 @@ function convertUnitToItemBase(reqQty, reqUnit, baseUnit) {
         <View style={styles.opsGrid}>
           <TouchableOpacity style={styles.opsTile} activeOpacity={0.7} onPress={() => navigation.navigate('MenuManagement', { profile })}>
             <Text style={styles.opsTileTitle}>Smart Menu</Text>
-            <Text style={styles.opsTileSub}>AI OCR & Dishes</Text>
-          </TouchableOpacity>
+                      </TouchableOpacity>
 
           <TouchableOpacity style={styles.opsTile} activeOpacity={0.7} onPress={() => navigation.navigate('InventoryMobile', { profile })}>
             <Text style={styles.opsTileTitle}>Inventory</Text>
-            <Text style={styles.opsTileSub}>Stock & Recipes</Text>
-          </TouchableOpacity>
+                      </TouchableOpacity>
 
           <TouchableOpacity style={styles.opsTile} activeOpacity={0.7} onPress={() => navigation.navigate('StaffManagement', { profile })}>
             <Text style={styles.opsTileTitle}>Staff</Text>
-            <Text style={styles.opsTileSub}>Roles & Shifts</Text>
-          </TouchableOpacity>
+                      </TouchableOpacity>
 
           <TouchableOpacity style={styles.opsTile} activeOpacity={0.7} onPress={() => navigation.navigate('TableAssignment', { profile })}>
             <Text style={styles.opsTileTitle}>Tables</Text>
-            <Text style={styles.opsTileSub}>Assignment</Text>
-          </TouchableOpacity>
+                      </TouchableOpacity>
         </View>
 
 

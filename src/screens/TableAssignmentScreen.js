@@ -385,8 +385,7 @@ export default function TableAssignmentScreen({ route, navigation }) {
         </TouchableOpacity>
         <View style={{ flex: 1, marginLeft: 8 }}>
           <Text style={styles.headerTitle}>Table Control & Roster</Text>
-          <Text style={styles.headerSubtitle}>Live occupancy, QR states & staff allocation</Text>
-        </View>
+                  </View>
         <TouchableOpacity onPress={loadData} style={styles.refreshBtn}>
           <Ionicons name="refresh" size={20} color={COLORS.primary} />
         </TouchableOpacity>

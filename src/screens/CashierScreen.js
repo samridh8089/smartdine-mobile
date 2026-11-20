@@ -218,8 +218,7 @@ export default function CashierScreen({ route }) {
       <View style={styles.header}>
         <View>
           <Text style={styles.title}>Cashier Panel</Text>
-          <Text style={styles.subtitle}>Billing, GST & Split Payment settlements</Text>
-        </View>
+                  </View>
 
         {markedCount > 0 && (
           <View style={styles.alertBadge}>
