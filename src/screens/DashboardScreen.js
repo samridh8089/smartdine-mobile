@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, RefreshControl,
   ActivityIndicator, TouchableOpacity, Platform, Modal,
-  Alert, TextInput, Linking, Image,
+  Alert, TextInput, Linking, Image, Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -71,6 +71,9 @@ export default function DashboardScreen({ route }) {
   const cachedDash = restaurantId ? mobileCache.get(`dash_${restaurantId}`) : null;
   const [restaurantName, setRestaurantName] = useState(() => cachedDash?.restaurantName || 'SmartDine');
   const [bellOn, setBellOn] = useState(() => cachedDash?.bellOn ?? true);
+  const [kdsBellOn, setKdsBellOn] = useState(() => cachedDash?.kdsBellOn ?? true);
+  const [waiterBellOn, setWaiterBellOn] = useState(() => cachedDash?.waiterBellOn ?? true);
+  const [showBellModal, setShowBellModal] = useState(false);
   const [todayOrders, setTodayOrders] = useState(() => cachedDash?.todayOrders || []);
   const [lowStockItems, setLowStockItems] = useState(() => cachedDash?.lowStockItems || []);
   const [outOfStockMenuItems, setOutOfStockMenuItems] = useState(() => cachedDash?.outOfStockMenuItems || []);
@@ -307,6 +310,12 @@ function convertUnitToItemBase(reqQty, reqUnit, baseUnit) {
         if (restData.settings?.owner_bell_enabled !== undefined) {
           setBellOn(restData.settings.owner_bell_enabled !== false);
         }
+        if (restData.settings?.kds_notifications_enabled !== undefined) {
+          setKdsBellOn(restData.settings.kds_notifications_enabled !== false);
+        }
+        if (restData.settings?.waiter_notifications_enabled !== undefined) {
+          setWaiterBellOn(restData.settings.waiter_notifications_enabled !== false);
+        }
         // Synchronize live subscription plan from DB
         if (profile) {
           profile.subscription_plan = restData.subscription_plan || 'starter';
@@ -460,6 +469,32 @@ function convertUnitToItemBase(reqQty, reqUnit, baseUnit) {
     return 'Good Evening';
   };
 
+  const handleToggleKdsBell = async (val) => {
+    setKdsBellOn(val);
+    if (restaurantId) {
+      try {
+        const { data: rData } = await supabase.from('restaurants').select('settings').eq('id', restaurantId).single();
+        const newSettings = { ...(rData?.settings || {}), kds_notifications_enabled: val };
+        await supabase.from('restaurants').update({ settings: newSettings }).eq('id', restaurantId);
+      } catch (e) {
+        console.log('Error updating kds bell state:', e);
+      }
+    }
+  };
+
+  const handleToggleWaiterBell = async (val) => {
+    setWaiterBellOn(val);
+    if (restaurantId) {
+      try {
+        const { data: rData } = await supabase.from('restaurants').select('settings').eq('id', restaurantId).single();
+        const newSettings = { ...(rData?.settings || {}), waiter_notifications_enabled: val };
+        await supabase.from('restaurants').update({ settings: newSettings }).eq('id', restaurantId);
+      } catch (e) {
+        console.log('Error updating waiter bell state:', e);
+      }
+    }
+  };
+
   const handleToggleBell = async () => {
     const nextBell = !bellOn;
     setBellOn(nextBell);
@@ -505,10 +540,10 @@ function convertUnitToItemBase(reqQty, reqUnit, baseUnit) {
           </View>
 
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            {/* 🔔 Owner Bell Mute/Unmute Toggle */}
+            {/* 🔔 Owner Bell Controls (Opens KDS & Waiter switches) */}
             <TouchableOpacity
-              style={[styles.bellBtn, bellOn ? styles.bellBtnOn : styles.bellBtnOff]}
-              onPress={handleToggleBell}
+              style={[styles.bellBtn, (bellOn && (kdsBellOn || waiterBellOn)) ? styles.bellBtnOn : styles.bellBtnOff]}
+              onPress={() => setShowBellModal(true)}
               activeOpacity={0.8}
             >
               <Ionicons
@@ -758,6 +793,81 @@ function convertUnitToItemBase(reqQty, reqUnit, baseUnit) {
           })
         )}
       </ScrollView>
+
+      {/* Sound & Notification Controls Modal */}
+      <Modal
+        visible={showBellModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowBellModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowBellModal(false)}
+        >
+          <View style={[styles.modalCard, { width: '88%', maxWidth: 360, padding: 20 }]}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Ionicons name="notifications" size={20} color={COLORS.primary || '#059669'} />
+                <Text style={{ fontSize: 16, fontWeight: '700', color: '#1e293b' }}>Notification Controls</Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowBellModal(false)}>
+                <Ionicons name="close" size={22} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Switch 1: Kitchen / KDS */}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
+              <View style={{ flex: 1, paddingRight: 10 }}>
+                <Text style={{ fontSize: 14, fontWeight: '600', color: '#0f172a' }}>Kitchen / KDS Orders</Text>
+                <Text style={{ fontSize: 12, color: '#64748b' }}>Cooking orders sound & push</Text>
+              </View>
+              <Switch
+                value={kdsBellOn}
+                onValueChange={handleToggleKdsBell}
+                trackColor={{ false: '#cbd5e1', true: '#f59e0b' }}
+                thumbColor="#ffffff"
+              />
+            </View>
+
+            {/* Switch 2: Waiter & Service */}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
+              <View style={{ flex: 1, paddingRight: 10 }}>
+                <Text style={{ fontSize: 14, fontWeight: '600', color: '#0f172a' }}>Waiter Service Alerts</Text>
+                <Text style={{ fontSize: 12, color: '#64748b' }}>Food ready, calls & bill requests</Text>
+              </View>
+              <Switch
+                value={waiterBellOn}
+                onValueChange={handleToggleWaiterBell}
+                trackColor={{ false: '#cbd5e1', true: '#6366f1' }}
+                thumbColor="#ffffff"
+              />
+            </View>
+
+            {/* Master Mute All */}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12 }}>
+              <View style={{ flex: 1, paddingRight: 10 }}>
+                <Text style={{ fontSize: 14, fontWeight: '600', color: '#0f172a' }}>All Sound Alerts</Text>
+                <Text style={{ fontSize: 12, color: '#64748b' }}>Master sound ON / OFF</Text>
+              </View>
+              <Switch
+                value={bellOn}
+                onValueChange={handleToggleBell}
+                trackColor={{ false: '#cbd5e1', true: '#10b981' }}
+                thumbColor="#ffffff"
+              />
+            </View>
+
+            <TouchableOpacity
+              style={{ marginTop: 16, backgroundColor: '#0f172a', borderRadius: 10, paddingVertical: 10, alignItems: 'center' }}
+              onPress={() => setShowBellModal(false)}
+            >
+              <Text style={{ color: '#ffffff', fontWeight: '700', fontSize: 14 }}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       {/* Priority 2 Modal: Stock & Menu Alerts View All */}
       <Modal
