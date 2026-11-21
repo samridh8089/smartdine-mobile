@@ -6,7 +6,7 @@ import {
   Alert, TextInput, Modal, Vibration,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons, MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
@@ -812,50 +812,7 @@ export default function OrdersScreen({ route }) {
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       {/* Top Header */}
       <View style={styles.header}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%', marginBottom: 10 }}>
-          <Text style={styles.title}>Live Orders</Text>
-
-          {/* Quick Dual Notification Toggles */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <TouchableOpacity
-              onPress={handleToggleKdsBell}
-              activeOpacity={0.7}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 4,
-                backgroundColor: kdsBellOn ? '#f59e0b' : '#e2e8f0',
-                paddingHorizontal: 8,
-                paddingVertical: 5,
-                borderRadius: 8,
-              }}
-            >
-              <MaterialCommunityIcons name="chef-hat" size={14} color={kdsBellOn ? '#ffffff' : '#64748b'} />
-              <Text style={{ fontSize: 11, fontWeight: '700', color: kdsBellOn ? '#ffffff' : '#64748b' }}>
-                KDS {kdsBellOn ? 'ON' : 'OFF'}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={handleToggleWaiterBell}
-              activeOpacity={0.7}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 4,
-                backgroundColor: waiterBellOn ? '#6366f1' : '#e2e8f0',
-                paddingHorizontal: 8,
-                paddingVertical: 5,
-                borderRadius: 8,
-              }}
-            >
-              <MaterialCommunityIcons name="bell-ring" size={14} color={waiterBellOn ? '#ffffff' : '#64748b'} />
-              <Text style={{ fontSize: 11, fontWeight: '700', color: waiterBellOn ? '#ffffff' : '#64748b' }}>
-                Waiter {waiterBellOn ? 'ON' : 'OFF'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+        <Text style={styles.title}>Live Orders</Text>
 
         {/* Tab Switcher */}
         <View style={styles.tabContainer}>
