@@ -102,8 +102,8 @@ export default function OwnerWebScreen({ navigation, route }) {
         await handleSignOutAndReset();
       } else if (data?.type === 'SHARE_FILE' || data?.type === 'DOWNLOAD_FILE') {
         try {
-          const rawBase64 = (data.base64 || '').replace(/^data:image\/[a-z]+;base64,/, '');
-          const filename = data.filename || `salary_slip_${Date.now()}.png`;
+          const rawBase64 = (data.base64 || '').replace(/^data:[^;]+;base64,/, '');
+          const filename = data.filename || `salary_slip_${Date.now()}.pdf`;
           const fileUri = `${FileSystem.cacheDirectory}${filename}`;
           if (rawBase64) {
             await FileSystem.writeAsStringAsync(fileUri, rawBase64, {
