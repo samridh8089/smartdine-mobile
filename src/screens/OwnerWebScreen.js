@@ -8,8 +8,11 @@ import {
   Platform,
   StatusBar,
   SafeAreaView,
+  Share,
+  Linking,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
+import * as FileSystem from 'expo-file-system';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
 
@@ -91,12 +94,34 @@ export default function OwnerWebScreen({ navigation, route }) {
     true;
   `, [sessionJson]);
 
-  // 4. Handle messages from web app (e.g. sign out)
+  // 4. Handle messages from web app (sign out, file downloads, native shares)
   const handleMessage = async (event) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
       if (data?.type === 'SIGN_OUT') {
         await handleSignOutAndReset();
+      } else if (data?.type === 'SHARE_FILE' || data?.type === 'DOWNLOAD_FILE') {
+        try {
+          const rawBase64 = (data.base64 || '').replace(/^data:image\/[a-z]+;base64,/, '');
+          const filename = data.filename || `salary_slip_${Date.now()}.png`;
+          const fileUri = `${FileSystem.cacheDirectory}${filename}`;
+          if (rawBase64) {
+            await FileSystem.writeAsStringAsync(fileUri, rawBase64, {
+              encoding: FileSystem.EncodingType.Base64,
+            });
+            if (data.type === 'SHARE_FILE') {
+              await Share.share({
+                url: fileUri,
+                title: data.title || 'Salary Slip',
+                message: data.message || `Salary Slip: ${filename}`,
+              });
+            } else {
+              Alert.alert('Slip Saved', `Salary slip saved to device:\n${filename}`);
+            }
+          }
+        } catch (fileErr) {
+          console.log('[OwnerWebScreen] file share error:', fileErr?.message);
+        }
       }
     } catch (_) {}
   };
@@ -108,6 +133,18 @@ export default function OwnerWebScreen({ navigation, route }) {
         ref={webViewRef}
         source={WEBVIEW_SOURCE}
         injectedJavaScriptBeforeContentLoaded={injectedAuthScript}
+        onShouldStartLoadWithRequest={(request) => {
+          if (
+            request.url.startsWith('whatsapp://') ||
+            request.url.startsWith('https://wa.me') ||
+            request.url.startsWith('mailto:') ||
+            request.url.startsWith('tel:')
+          ) {
+            Linking.openURL(request.url).catch(() => {});
+            return false;
+          }
+          return true;
+        }}
         onNavigationStateChange={(navState) => {
           canGoBackRef.current = !!navState.canGoBack;
           // If web app redirects to /login, route cleanly to native Login
