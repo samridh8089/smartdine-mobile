@@ -109,15 +109,21 @@ export default function OwnerWebScreen({ navigation, route }) {
             await FileSystem.writeAsStringAsync(fileUri, rawBase64, {
               encoding: FileSystem.EncodingType.Base64,
             });
-            if (data.type === 'SHARE_FILE') {
-              await Share.share({
-                url: fileUri,
-                title: data.title || 'Salary Slip',
-                message: data.message || `Salary Slip: ${filename}`,
-              });
-            } else {
-              Alert.alert('Slip Saved', `Salary slip saved to device:\n${filename}`);
-            }
+
+            // Convert to secure content:// URI via FileProvider so external apps & Android media can read it
+            let shareUrl = fileUri;
+            try {
+              if (typeof FileSystem.getContentUriAsync === 'function') {
+                shareUrl = await FileSystem.getContentUriAsync(fileUri);
+              }
+            } catch (_) {}
+
+            // Trigger system share dialog with file content
+            await Share.share({
+              url: shareUrl,
+              title: data.title || 'Salary Slip',
+              message: data.message || `Salary Slip: ${filename}`,
+            });
           }
         } catch (fileErr) {
           console.log('[OwnerWebScreen] file share error:', fileErr?.message);
