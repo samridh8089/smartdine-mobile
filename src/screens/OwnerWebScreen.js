@@ -137,6 +137,7 @@ export default function OwnerWebScreen({ navigation, route }) {
           if (
             request.url.startsWith('whatsapp://') ||
             request.url.startsWith('https://wa.me') ||
+            request.url.startsWith('intent://') ||
             request.url.startsWith('mailto:') ||
             request.url.startsWith('tel:')
           ) {
