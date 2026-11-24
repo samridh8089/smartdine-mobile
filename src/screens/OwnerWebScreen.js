@@ -143,11 +143,21 @@ export default function OwnerWebScreen({ navigation, route }) {
           if (
             request.url.startsWith('whatsapp://') ||
             request.url.startsWith('https://wa.me') ||
-            request.url.startsWith('intent://') ||
             request.url.startsWith('mailto:') ||
             request.url.startsWith('tel:')
           ) {
             Linking.openURL(request.url).catch(() => {});
+            return false;
+          }
+          if (request.url.includes('/api/attendance/salary-slip/pdf')) {
+            Linking.openURL(request.url).catch(() => {});
+            return false;
+          }
+          if (request.url.startsWith('intent://')) {
+            try {
+              const cleaned = request.url.replace(/^intent:\/\//, 'https://').split('#Intent;')[0];
+              Linking.openURL(cleaned).catch(() => {});
+            } catch (_) {}
             return false;
           }
           return true;
